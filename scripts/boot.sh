@@ -18,7 +18,11 @@
 # 退出码：0 全绿或已修复 | 2 未修复漂移 | 3 锁被占用 | 4 用法/内部错误 | 5 锁机制全部不可用
 set -uo pipefail
 
-BASE="${PUA_DIR:-/sandbox/workspace/.pua}"
+BASE="${PUA_DIR:-}"
+if [ -z "$BASE" ]; then
+  # 默认状态目录：本沙箱优先用持久层，其他环境用 ~/.pua（符合 Unix 惯例）
+  if [ -d /sandbox/workspace ]; then BASE="/sandbox/workspace/.pua"; else BASE="$HOME/.pua"; fi
+fi
 MODE="reconcile"; SCOPE="user"
 for a in "$@"; do
   case "$a" in
