@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # PUA Pro v4.3 断言自测：覆盖幂等 / 漂移 / dry-run / 双锁原语 / 陈旧锁回收 / 租约 / 用户隔离 / 原子写
 set -uo pipefail
-BOOT="/sandbox/workspace/skills/pua-pro/scripts/boot.sh"
+# 定位自身所在目录：保证测的是本目录的脚本，不是别处的副本（防假通过）
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOOT="$SELF_DIR/boot.sh"
 # 测试目录放内存盘：fuse 盘单次文件写约 200-400ms，/dev/shm 快一个数量级，
 # 且完全不污染工作区。若 /dev/shm 不可用则回退到工作区。
 if [ -d /dev/shm ] && [ -w /dev/shm ]; then
@@ -90,6 +92,8 @@ errout=$(PUA_DIR="/etc/evil" bash "$BOOT" --check 2>&1 >/dev/null)
 chk "错误信息走 stderr" "$(echo "$errout" | grep -c 'refuse')" "1"
 
 echo "=== 12. 退出码与语法 ==="
+chk "测试对象是本目录脚本" "$BOOT" "$SELF_DIR/boot.sh"
+if [ ! -f "$BOOT" ]; then bad "boot.sh 不存在于本目录"; fi
 chk "全绿 exit 0" "$(PUA_DIR="$BASE" bash "$BOOT" >/dev/null 2>&1; echo $?)" "0"
 chk "非法参数 exit 4" "$(PUA_DIR="$BASE" bash "$BOOT" --oops >/dev/null 2>&1; echo $?)" "4"
 bash -n "$BOOT" 2>/dev/null && ok "bash -n" || bad "bash -n"
