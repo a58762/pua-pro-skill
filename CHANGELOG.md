@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## v5.5（2026-11-24）
+
+**新增：自建搜索（零额度）**
+- `scripts/own_search.py`：直接走 Bing 的 RSS 端点（`format=rss`），无需 key、无额度、无追踪
+- 借鉴 SearXNG 的元搜索思路与 RRF（倒数排名融合）算法
+- 内置黑名单过滤（知乎/CSDN/掘金/百度百科/36氪/虎嗅等 20+ 二手站）、去重、多区域融合
+- 实测：英文 10→7 条（过滤生效）、日文 9 条、多区域 RRF 正常
+- `references/own-search.md` 记录机制来源、实现细节与边界
+
+**实测排除的无 key 通道**：DDG html/lite（DNS 不通）、Mojeek（403）、Brave/Startpage/Qwant（000）、多个 SearXNG 公共实例（000）
+
 ## v5.4（2026-11-24）
 
 **重大突破：被封站点不需要个人代理**
