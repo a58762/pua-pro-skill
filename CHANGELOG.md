@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## v5.4（2026-11-24）
+
+**重大突破：被封站点不需要个人代理**
+- 发现检索 API 的 `include_domains` 可代抓被封站点。实测 Reddit / Heise / Tweakers / Lobsters 全部成功，返回带摘要与票数，比原始 JSON 更可读
+- 新增诊断法：403（站点拒绝）→ DoH 比对真实 IP（DNS 污染）→ `--resolve` 复测（IP 层阻断）。实测 heise/reddit 的 DNS 被指向 Facebook IP 段与 Teredo 地址
+- `fetch_community.py` 新增 5 个"检索 API 代抓"源：reddit / heise / tweakers / lobsters / devto
+- 验证并排除：pullpush（持续 429）、rsshub.app 与 rsshub.rssforever.com（000）、多个 redlib 实例（000）、corsproxy.io（403）、api.codetabs.com（000）
+- 兜底方案：api.allorigins.win 可拿到完整 190KB JSON，但成功率仅 20%
+- **核心认知：你不需要能访问那个网站，只需要能访问一个能访问它的服务**
+
 ## v5.3（2026-11-24）
 
 **新增能力：403 站点的官方通道**
