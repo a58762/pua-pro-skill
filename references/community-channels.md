@@ -42,6 +42,59 @@
 - **HTML.it 返回 451**（地区法律限制）
 - **`sort=votes` 会返回高票无关旧帖**，搜索必须用 `sort=relevance`
 
+
+## 关键补充：直连不通 ≠ 必须自己搞代理（2026-11-24 实测）
+
+### 先判断"不通"是哪一层
+
+| 现象 | 含义 | 判断方法 |
+|---|---|---|
+| 403 | 站点在线但拒绝该客户端 | 换官方 API / RSS |
+| 000 + DNS 指向怪 IP | **DNS 污染** | DoH 查真实 IP 对比 |
+| 000 + `--resolve` 真实 IP 仍不通 | **IP 层被阻断** | 确认是链路问题，非站点问题 |
+| 000 + 只有 IPv6 记录 | 沙箱无 IPv6 出口 | 走检索 API |
+
+实测结论：`www.heise.de` 被解析到 `2a03:2880:…:face:b00c`（Facebook IP 段），`www.reddit.com` 被解析到 `2001::1`（Teredo 无效地址）——**这是污染，不是站点拒绝**。用 DoH 拿真实 IP 后 `--resolve` 依然 000，说明 IP 层也被阻断。
+
+### 正确解法：让检索 API 替你去抓
+
+**不需要个人代理。** 检索 API（Tavily / Firecrawl）的服务器本身在海外，你给域名和关键词，它替你把内容抓回来。
+
+```bash
+python3 scripts/fetch_community.py --source reddit  --query "gemini 4 neon" --limit 3
+python3 scripts/fetch_community.py --source heise   --query "gemini 4"
+python3 scripts/fetch_community.py --source tweakers --query "gemini"
+```
+
+实测结果（全部成功）：
+
+| 站点 | 结果 | 样例 |
+|---|---|---|
+| **reddit.com** | ✅ 2 条 | "Gemini 4 Neon ranked 1st, even better than Fable 5.2（663 votes, 73 comments）" |
+| **heise.de** | ✅ 2 条 | "Gemini 4 Neon takes on Google's flagship model" |
+| **tweakers.net** | ✅ 2 条 | 荷兰语原文报道 |
+| **lobste.rs** | ✅ 2 条 | 社区讨论 |
+
+**副作用是好的**：检索 API 返回带摘要和票数，比原始 JSON 更好读。
+
+### 备选：公共 CORS 代理（不稳定）
+
+`https://api.allorigins.win/raw?url=<encoded>` 实测 5 次成功 1 次（20%），能拿到完整 190KB JSON，但成功率低，只作最后兜底。
+
+**已验证不可用**：corsproxy.io（403）、api.codetabs.com（000）、api.pullpush.io（持续 429）、rsshub.app 公共实例（000）、多个 redlib 实例（000）。
+
+### 优先级（更新后）
+
+```
+1. 官方 API / RSS                 ← HN / SE / Qiita / Zenn / Habr
+2. 检索 API 代抓（include_domains） ← Reddit / Heise / Tweakers / Lobsters / dev.to
+3. 公共 CORS 代理                 ← 兜底，成功率低
+4. 自建代理 + 浏览器               ← 最后手段
+```
+
+**核心认知**：你不需要能访问那个网站，只需要能访问一个能访问它的服务。
+
+
 ## 用法
 
 ```bash
