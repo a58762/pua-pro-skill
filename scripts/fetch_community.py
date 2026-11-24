@@ -82,18 +82,48 @@ SOURCES = {
     "habr":  ("Habr 官方 RSS",                   False, fetch_habr),
 }
 
-# 已确认直连不通的源，需要代理或检索 API 缓存
-UNAVAILABLE = {
-    "reddit":  "直连超时：需代理，或用 Tavily 取摘要",
-    "heise":   "直连超时：需代理",
-    "devto":   "直连超时：需代理",
-    "lobsters":"直连超时：需代理",
-    "tweakers":"403：走 Tavily",
+
+# ---------------- 被封站点的通道：检索 API 代抓 ----------------
+# 原理：检索 API 的服务器在海外，替我们抓取并把内容返回，无需本地代理
+SEARCH_DOMAINS = {
+    "reddit":  "reddit.com",
+    "heise":   "heise.de",
+    "tweakers":"tweakers.net",
+    "lobsters":"lobste.rs",
+    "devto":   "dev.to",
 }
+
+def fetch_via_search(domain_key, q, limit=LIMIT):
+    import os
+    key = os.environ.get("TAVILY_API_KEY")
+    if not key:
+        raise RuntimeError("未配置 TAVILY_API_KEY")
+    dom = SEARCH_DOMAINS[domain_key]
+    body = {"api_key": key, "query": q, "include_domains": [dom],
+            "max_results": limit, "search_depth": "advanced"}
+    req = urllib.request.Request("https://api.tavily.com/search",
+        data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        d = json.loads(r.read())
+    return [(it.get("title","")[:90], it.get("url",""), (it.get("content") or "")[:160].replace("\n"," "))
+            for it in d.get("results", [])]
+
+# 已确认直连不通的源（现可用 --source <name> 走检索API），需要代理或检索 API 缓存
+UNAVAILABLE = {k: "直连不通 → 用 --source " + k + "（走检索 API 代抓）" for k in
+    ["reddit","heise","devto","lobsters","tweakers"]}
 
 def run(name, q=None, site="stackoverflow", limit=LIMIT):
     global LIMIT
     LIMIT = limit
+    if name in SEARCH_DOMAINS:
+        try:
+            rows = fetch_via_search(name, q, limit)
+        except Exception as e:
+            print(f"[{name}] 失败：{type(e).__name__}: {e}"); return 1
+        print(f"=== {name} · 检索API代抓（{SEARCH_DOMAINS[name]}） · {len(rows)} 条 ===")
+        for ti, l, sn in rows:
+            print(f"- {ti}"); print(f"  {l}"); print(f"  {sn}")
+        return 0
     desc, needs_q, fn = SOURCES[name]
     try:
         rows = fn(q) if needs_q else (fn() if name != "habr" else fn(site))
@@ -121,7 +151,9 @@ def main():
         print("可用源（官方通道）：")
         for k,(d,nq,_) in SOURCES.items():
             print(f"  {k:8s} {d}{'  需 --query' if nq else ''}")
-        print("\n需代理/检索API的源：")
+        print("\n检索 API 代抓（无需代理）：")
+        for k in SEARCH_DOMAINS: print(f"  {k:10s} {SEARCH_DOMAINS[k]}")
+        print()
         for k,v in UNAVAILABLE.items():
             print(f"  {k:10s} {v}")
         return 0
@@ -129,9 +161,14 @@ def main():
     names = list(SOURCES) if a.source == "all" else [a.source]
     rc = 0
     for n in names:
-        if n not in SOURCES:
+        if n not in SOURCES and n not in SEARCH_DOMAINS:
             print(f"[skip] 未知源 {n}"); rc = 2; continue
         if n == "habr": rc |= run(n, site=a.lang, limit=a.limit)
+        elif n in SEARCH_DOMAINS:
+            if not a.query:
+                print(f"[skip] {n} 需要 --query"); rc = 2
+            else:
+                rc |= run(n, q=a.query, limit=a.limit)
         elif SOURCES[n][1] and not a.query:
             print(f"[skip] {n} 需要 --query"); rc = 2
         else: rc |= run(n, q=a.query, site=a.site, limit=a.limit)
