@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## v5.3（2026-11-24）
+
+**新增能力：403 站点的官方通道**
+- 新增 `scripts/fetch_community.py`：封装 5 个社区的官方 API/RSS（HN、Stack Exchange、Qiita、Zenn、Habr），一条命令并行取
+- 新增 `references/community-channels.md`：记录每条通道的端点、实测状态、rate limit 与限制
+- 明确四层优先级：官方 API → 官方 RSS → 检索 API 缓存 → 代理+浏览器；**禁止**轮换 UA 硬刷
+
+**实测结论**
+- Stack Overflow 语言站仅剩 es / pt / ru / ja；it / pl / tr / uk 已关闭
+- `sort=votes` 会返回无关高票旧帖，搜索必须用 `sort=relevance`
+- Zenn 的 RSS 只能看最新流，不支持关键词
+
 ## v5.2（2026-11-24）
 
 **删除**
