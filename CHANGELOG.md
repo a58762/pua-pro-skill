@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## v5.7（2026-11-24）
+
+**新增：本地索引搜索（自建语料）**
+- `scripts/local_search.py`：SQLite FTS5 + BM25 + trigram 分词；index / search / stats 三命令
+- 内置源：Hacker News、Qiita、Zenn、Habr（官方 API 或 RSS）
+- URL 唯一去重，可反复增量索引；索引与检索全离线，毫秒级
+- 实测：120 条入库（1.4MB），英文/日文查询命中，2 字符短词自动退化 LIKE 兜底
+- `references/local-index.md` 记录机制来源（strands / openclaw-memory / Jean Galea / Zenn 实践）与边界
+
+**认知修正**
+- 先前把"搜索技能"理解成"调搜索引擎"，实为借用别人的索引
+- agent 社区的正确做法是：选定自己关心的源 → 抓取入库 → 本地建索引 → 检索
+
 ## v5.6（2026-11-24）
 
 **新增：搜索 v2（读源码后融合）**
