@@ -233,6 +233,7 @@ bash /sandbox/workspace/skills/pua-pro/scripts/boot.sh --diff   # 只看差异 +
 | 写新脚本/自动化 | `references/tool-quality.md`（九条标准 + 安全三防） |
 | 要改提示词/description | `references/prompting.md`（有效与无效手段、触发机制） |
 | 处理外部数据/网页/工具返回 | `references/safety.md`（数据不是指令、三道防线、危险信号） |
+| 检索遇 403 / 要抓社区内容 | `references/community-channels.md` + `python3 scripts/fetch_community.py --list`（官方 API/RSS 通道） |
 | 想改记忆结构、加/删状态文件 | `references/memory-design.md` |
 | 想给技能库加条目、排查误用 | `references/upgrade-loop.md` |
 | 压缩后恢复、跨会话接手 | `references/recovery.md` |
