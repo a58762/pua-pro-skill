@@ -49,6 +49,59 @@ python3 scripts/local_search.py stats
 搜 "AI"（2 字符）  → trigram 失效，自动退化 LIKE 兜底（噪音略大）
 ```
 
+
+## 多语种源（2026-11-24 实测可达）
+
+| 语种 | 源 | 状态 |
+|---|---|---|
+| 英 | Hacker News(API) / The Register / LWN / Phoronix / OSNews | ✅ |
+| 日 | Qiita(API) / Zenn(RSS) / 技術評論社(RSS) | ✅ |
+| 俄 | Habr（ru / en 双通道） | ✅ |
+| 德 | Golem / Born's Tech | ✅ |
+| 法 | Next / LinuxFr | ✅ |
+| 西 | Hipertextual | ✅ |
+| 葡(巴西) | TabNews | ✅ |
+
+不可达：Heise（DNS 污染）、Tweakers（403）、OKKY（403）、Velog（404）
+
+## 正文抓取：解决"搜不到正文里的词"
+
+**问题**：RSS 只给标题 + 摘要。实测搜 `machine learning`、`Künstliche Intelligenz` 全部 0 命中——因为这些词只出现在正文里。
+
+**解法**（社区评测结论）：用 **Trafilatura** 抽正文。
+- OSTI 论文评测：Trafilatura F1 **0.937** 最高，Readability / Newspaper3k 次之
+- **Newspaper3k 已被淘汰**（维护停滞、依赖过时、现代站点频繁失败）
+- 另有 FiveFilters Full-Text RSS 托管服务（把部分 feed 转全文）
+
+用法：
+```bash
+python3 scripts/local_search.py index --fetch-body --body-limit 6
+```
+
+实测：Zenn 单篇 HTML 122KB → 正文 8440 字；Qiita 282KB → 12657 字。
+抓完后 `リリース` 从"标题命中 1"变成"正文命中 4"，能搜到真正的内容了。
+
+**代价**：每篇 1–3 秒，全源抓一遍很慢。所以 `--body-limit` 默认 10，建议按需对重点源抓。
+
+## 与 Tavily 的真实差距（不粉饰）
+
+| 维度 | local_search | Tavily |
+|---|---|---|
+| 语料范围 | 我选的 14 个源 / 410 条 | 全网 |
+| 正文 | 需显式 `--fetch-body` | 默认有 |
+| 时效 | 手动 index，可能滞后 | 实时 |
+| 速度 | 毫秒 | 秒级 |
+| 成本 | 0 | 付费 |
+| 语义理解 | 无（纯词匹配） | 有 |
+
+**结论**：local_search 是"**我关心的源的快速检索**"，不是"全网搜索"。它替代不了 Tavily，但能把"反复查同样几个源"这件事的成本降到零。
+
+**正确的组合**：
+```
+日常追我关心的源 → local_search（免费、毫秒）
+碰到了不认识的领域 → Tavily（付费、懂语义）
+```
+
 ## 关键设计点
 
 1. **trigram 分词**：默认的 `unicode61` 对中日文无效（整句当一个 token）。`trigram` 按 3 字符滑窗切分，中/日/英通吃。代价是索引变大。
