@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## v5.2（2026-11-24）
+
+**删除**
+- 移除 18 分 rubric 自评。分数是自己给自己打分，对看结果的人没有价值；交付改为只报三件事：数据（项数×轮次）、边界、结论
+
+**扩充**
+- 检索社区清单从 8 语种扩到 20+（Stack Overflow 各语言站、Tweakers、Wykop、R10、DOU、TabNews、Blognone、Menéame、Sekurak 等）
+- 每个站点标注实测可达状态：✅ 可直连 / ⚠️ 拦截自动化但在线 / ❌ 已不可用
+- 实测确认：it / pl / tr / uk 的 Stack Overflow 语言站已关闭；HTML.it 返回 451 地区限制
+
 ## v5.1（2026-11-24）
 
 **新增硬规矩**
