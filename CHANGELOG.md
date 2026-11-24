@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## v5.8（2026-11-24）
+
+**多语种扩充**
+- 源从 4 个扩到 14 个，覆盖英/日/俄/德/法/西/葡：新增 Golem、Born's Tech、Next、LinuxFr、Hipertextual、TabNews、技術評論社、The Register、LWN、Phoronix、OSNews
+- 实测索引 410 条 / 2.0 MB
+
+**正文抓取（解决核心短板）**
+- 集成 Trafilatura（OSTI 评测 F1 0.937 最高）；放弃 Newspaper3k（已淘汰）
+- `index --fetch-body --body-limit N`
+- 实测：`リリース` 从"标题命中 1"变为"正文命中 4"，能搜到正文内容
+- 加 FTS5 UPDATE 触发器，正文更新后索引同步
+
+**已验证的差距**
+- 无正文时搜 `machine learning` / `Künstliche Intelligenz` 全 0 命中
+- 与 Tavily 的真实差距：语料窄、无语义、需手动索引；但零成本、毫秒级
+
 ## v5.7（2026-11-24）
 
 **新增：本地索引搜索（自建语料）**
