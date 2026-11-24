@@ -26,6 +26,10 @@
 import argparse, json, os, re, sqlite3, sys, time, urllib.request, urllib.parse
 from xml.etree import ElementTree as ET
 
+for _p in ("/opt/toolchain/pylibs",):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 DB = "/sandbox/workspace/.pua/u-0/index/search.db"
 UA = "pua-pro-skill/1.0 (local index)"
 
@@ -35,6 +39,18 @@ SOURCES = {
     "zenn":   ("Zenn 最新", "rss", "https://zenn.dev/feed"),
     "habr":   ("Habr 最新（俄）", "rss", "https://habr.com/ru/rss/all/all/"),
     "habr_en":("Habr 最新（英）", "rss", "https://habr.com/en/rss/all/all/"),
+    # —— 多语种扩充（2026-11-24 实测可达）——
+    "gihyo":  ("技術評論社（日）", "rss", "https://gihyo.jp/feed/atom"),
+    "golem":  ("Golem（德）", "rss", "https://www.golem.de/rss.php?feed=RSS2.0"),
+    "borncity":("Born's Tech（德）", "rss", "https://www.borncity.com/blog/feed/"),
+    "nextink":("Next（法）", "rss", "https://next.ink/feed/"),
+    "linuxfr":("LinuxFr（法）", "rss", "https://linuxfr.org/news.atom"),
+    "hipertextual":("Hipertextual（西）", "rss", "https://hipertextual.com/feed"),
+    "tabnews":("TabNews（葡/巴西）", "rss", "https://tabnews.com.br/rss"),
+    "thereg": ("The Register（英）", "rss", "https://www.theregister.com/headlines.atom"),
+    "lwn":    ("LWN（英）", "rss", "https://lwn.net/headlines/rss"),
+    "phoronix":("Phoronix（英）", "rss", "https://www.phoronix.com/rss.php"),
+    "osnews": ("OSNews（英）", "rss", "https://www.osnews.com/feed/"),
 }
 
 def conn():
@@ -52,6 +68,10 @@ def conn():
     CREATE TRIGGER IF NOT EXISTS docs_ai AFTER INSERT ON docs BEGIN
       INSERT INTO docs_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
     END;
+    CREATE TRIGGER IF NOT EXISTS docs_au AFTER UPDATE ON docs BEGIN
+      INSERT INTO docs_fts(docs_fts, rowid, title, body) VALUES('delete', old.id, old.title, old.body);
+      INSERT INTO docs_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+    END;
     """)
     return c
 
@@ -65,6 +85,20 @@ def get(url, timeout=20, retries=2):
         except Exception as e:
             last = e; time.sleep(1)
     raise last
+
+def extract_body(url, timeout=15):
+    """用 trafilatura 抓正文（社区评测 F1 最高，Newspaper3k 已淘汰）"""
+    try:
+        import trafilatura
+    except ImportError:
+        return ""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            html = r.read().decode("utf-8", "ignore")
+        return (trafilatura.extract(html) or "")[:8000]
+    except Exception:
+        return ""
 
 def parse_rss(raw):
     out = []
@@ -80,7 +114,7 @@ def parse_rss(raw):
             l = e.get("href", "") if e is not None else ""
         body = it.findtext(f"{ns}summary") or it.findtext("description") or ""
         d = it.findtext(f"{ns}published") or it.findtext("pubDate") or ""
-        if l: out.append({"title": t.strip(), "url": l.strip(),
+        if l and len(out) < 60: out.append({"title": t.strip(), "url": l.strip(),
                           "body": re.sub(r"<[^>]+>", " ", body).strip(), "ts": d.strip()})
     return out
 
@@ -110,7 +144,19 @@ def cmd_index(args):
         except Exception as e:
             print(f"[{name}] 失败: {type(e).__name__}: {e}"); continue
         new = 0
+        fetched = 0
         for r in rows:
+            if getattr(args, "fetch_body", False) and fetched < args.body_limit:
+                row = c.execute("SELECT id, length(body) FROM docs WHERE url=?", (r["url"],)).fetchone()
+                if row is None or (row[1] or 0) < 600:      # 无正文或正文过短才去抓
+                    body = extract_body(r["url"])
+                    if body and len(body) > 300:
+                        if row:
+                            c.execute("UPDATE docs SET body=? WHERE id=?", (body, row[0]))
+                            c.commit()
+                        else:
+                            r["body"] = body
+                        fetched += 1
             try:
                 c.execute("INSERT OR IGNORE INTO docs(source,title,url,body,ts) VALUES(?,?,?,?,?)",
                           (name, r["title"][:300], r["url"], r["body"][:4000], r["ts"]))
@@ -131,7 +177,9 @@ def cmd_search(args):
     q = args.query.strip()
     if not q: print("查询为空", file=sys.stderr); return 1
     # FTS5 MATCH：用引号包裹避免语法错误
-    safe = '"' + q.replace('"', '""') + '"'
+    # 多词用 AND 组合：整句短语匹配太严，多语种长短语几乎必空
+    terms = [w for w in q.split() if w]
+    safe = " AND ".join('"' + w.replace('"', '""') + '"' for w in terms) if terms else '""'
     sql = """SELECT d.title, d.url, d.source, d.ts, bm25(docs_fts) AS rank
              FROM docs_fts JOIN docs d ON d.id = docs_fts.rowid
              WHERE docs_fts MATCH ? ORDER BY rank LIMIT ?"""
@@ -168,7 +216,10 @@ def cmd_stats(args):
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
-    i = sub.add_parser("index"); i.add_argument("--source"); i.set_defaults(f=cmd_index)
+    i = sub.add_parser("index"); i.add_argument("--source")
+    i.add_argument("--fetch-body", action="store_true", help="抓正文（慢，但能搜到正文内容）")
+    i.add_argument("--body-limit", type=int, default=10, help="每个源最多抓几条正文")
+    i.set_defaults(f=cmd_index)
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--limit", type=int, default=10); s.set_defaults(f=cmd_search)
     st = sub.add_parser("stats"); st.set_defaults(f=cmd_stats)
     a = ap.parse_args()
