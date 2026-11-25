@@ -1,2 +1,8 @@
 pua-pro
 *.bak.*
+# 大文件不进仓库，由 setup_models.sh 下载
+models/
+bin/lightpanda
+# 运行产物
+refresh.log
+cmp_embed.log
