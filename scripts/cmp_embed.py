@@ -29,14 +29,16 @@ def recall(V_doc, V_q, gold, k):
     return sum(hits) / len(hits)
 
 
-def pick_sentence(body):
-    """取正文中间一句（25~120 字）做 query——比标题更接近真实提问形态；剔除 Markdown 链接/URL 片段"""
-    import re
-    body = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", body or "")   # [文字](链接) → 文字
-    body = re.sub(r"https?://\S+", " ", body)                     # 裸 URL 去掉
-    sents = [s.strip() for s in re.split(r"[。.!?！？\n]", body)]
-    sents = [s for s in sents if 25 <= len(s) <= 120 and not any(c in s for c in "{}<>|`")]
-    return sents[len(sents) // 2] if sents else (body or "")[:60]
+def pick_sentence(body, title=""):
+    """用标题当 query。
+    走过的弯路（都作废）：
+      ① 用标题 → 短对长，全 0 命中
+      ② 用正文中段句 → 句子来自 8000 字正文却只检索前 1200 字，必然失败
+      ③ 修正截断后 → 取到的"句子"其实是图注/导航碎片（"図2 images/fig02..."、"This page explains..."）
+    结论：标题是人工精炼的主题描述，与正文是同一内容的不同表述，最接近真实检索场景。
+    """
+    t = (title or "").strip()
+    return t if len(t) >= 8 else (body or "")[:60]
 
 
 def main():
@@ -46,8 +48,8 @@ def main():
     idx = rng.choice(len(rows), size=min(N_QUERY, len(rows)), replace=False)
     docs = [rows[i] for i in idx]
     gold = [pos[d[0]] for d in docs]
-    queries = [pick_sentence(d[2]) for d in docs]
-    texts = [(r[1] or "") + " " + (r[2] or "")[:1200] for r in rows]
+    queries = [pick_sentence(d[2], d[1]) for d in docs]
+    texts = [(r[2] or "")[:1200] for r in rows]   # 不含标题：标题做 query，正文做 doc，无泄漏
     print(f"语料 {len(rows)} 条，query {len(queries)} 条（正文中段句）")
     print(f"样例 query: {queries[0][:70]}\n")
 
