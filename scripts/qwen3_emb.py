@@ -9,6 +9,7 @@ import sys
 import numpy as np
 
 D = os.environ.get("QWEN3_EMB_DIR", "/sandbox/workspace/models/qwen3-emb-0.6b")
+F = os.environ.get("QWEN3_EMB_FILE", "model_int8.onnx")   # 可指向 harrier 的 model_q4.onnx
 _sess = None
 _tok = None
 
@@ -21,17 +22,29 @@ def _load():
     from tokenizers import Tokenizer
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    _sess = ort.InferenceSession(os.path.join(D, "onnx", "model_int8.onnx"),
+    _p1, _p2 = os.path.join(D, "onnx", F), os.path.join(D, F)
+    _mp = _p1 if os.path.isfile(_p1) else (_p2 if os.path.isfile(_p2) else _p1)
+    _sess = ort.InferenceSession(_mp,
                                  sess_options=so, providers=["CPUExecutionProvider"])
     _tok = Tokenizer.from_file(os.path.join(D, "tokenizer.json"))
-    _tok.enable_truncation(max_length=512)
-    _tok.enable_padding(direction="right", pad_id=0, pad_token="<|endoftext|>")
+    _tok.enable_truncation(max_length=int(os.environ.get("QWEN3_MAXLEN", "512")))
+    # decoder-only 模型的 last-token pooling 必须左填充：右填充会让"最后一个位置"落在 pad 上，
+    # 取到 pad 的隐状态，向量全错（实测 batch=4 时 R@1 从 0.95 掉到 0.15）
+    _tok.enable_padding(direction="left", pad_id=0, pad_token="<|endoftext|>")
+
+
+def _pre_pooled():
+    """onnx-community 的某些导出已内置 pooling+normalize（输出 sentence_embedding）。
+    这类模型输入只有 input_ids/attention_mask，直接用输出即可。"""
+    outs = _sess.get_outputs()
+    return len(outs) == 1 and "sentence_embedding" in outs[0].name
 
 
 def embed(texts, batch=16):
-    """返回 (N, 1024) L2 归一化向量"""
+    """返回 (N, dim) L2 归一化向量；自动适配「已 pooling」与「需自行 pooling」两种导出"""
     _load()
     names = {i.name for i in _sess.get_inputs()}
+    pre = _pre_pooled()
     out = []
     for s in range(0, len(texts), batch):
         enc = _tok.encode_batch(texts[s:s + batch])
@@ -50,9 +63,11 @@ def embed(texts, batch=16):
         for nm in names:
             if nm.startswith("past_key_values"):
                 feed[nm] = np.zeros((n, 8, 0, 128), dtype=np.float32)
-        h = _sess.run(None, feed)[0]
-        idx = mask.sum(1) - 1                     # 最后一个真实 token
-        v = h[np.arange(n), idx].astype("float32")
+        res = _sess.run(None, feed)[0]
+        if pre:
+            v = res.astype("float32")             # 已是 (n, dim) 句向量
+        else:
+            v = res[:, -1].astype("float32")   # 左填充下最后一位必是真实 token
         v /= (np.linalg.norm(v, axis=1, keepdims=True) + 1e-12)
         out.append(v)
     return np.vstack(out)
