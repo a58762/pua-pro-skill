@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## v5.10（2026-11-25）
+
+**找到 2026 Q4 真正的最强可下载小模型**
+- 多语种检索（EN/JA/DE/RU/ES/FR）+ HN 技术社区交叉核对，结论：
+  - MTEB Multilingual v2 榜首 `harrier-oss-v1-27b`（微软 MIT）、RTEB 榜首 `Qwen3-Embedding-8B`——**都放不下**（15–54GB）
+  - 1B 以下最优：**`Harrier-OSS-V1-0.6B`（微软，MIT，MTEB v2 69.0，399MB q4）**、**`Octen-Embedding-0.6B`（Apache 2.0，599MB int8）**
+  - 落选记录：`EmbeddingGemma 2`（多语言 61.15→61.36 几乎无提升，强项是多模态/代码）；`jina-v5-text-nano/small`（CC BY-NC 非商业）；`Ternlight`（7MB，质量不明）
+- 三个模型全部下载并跑通，统一口径实测（150 条语料 / 30 query / 标题做 query / doc 不含标题 / batch=8）：
+  | 模型 | 维度 | 体积 | R@1 | R@5 |
+  |---|---|---|---|---|
+  | MiniLM-multilingual（2020，原现役） | 384 | 450MB | 0.400 | 0.433 |
+  | **Harrier-OSS-V1-0.6B q4**（MIT） | 1024 | **399MB** | **0.567** | **0.767** |
+  | Octen-Embedding-0.6B int8（Apache 2.0） | 1024 | 599MB | 0.950\* | 1.000\* |
+  \* Octen 批维硬编码为 1，只能在 N=60 的小规模口径下测（batch=1 时 0.95/1.00），与上面 150 条口径不可直接比
+- **默认换成 Harrier q4**：体积最小、MIT 最宽松、跨语言强（中↔英 0.897、中「开源软件安全性」↔英「open source software security」0.924）
+- R@1 +0.167 / R@5 +0.334（相对 MiniLM，同口径）
+
+**修掉三个把评测带偏的 bug（都写进 cmp_embed.py 注释）**
+1. `gold` 存的是数据库 id，`topk` 是行号 → 比对必然全错（R@1=0.000）
+2. query 取自 8000 字正文的中段，doc 只取前 1200 字 → 那句话根本不在被检索文本里
+3. 截断范围修好后，取到的"句子"其实是图注/导航碎片（`図2 images/fig02...`）→ 改用标题做 query，且 doc 不含标题（否则 R@1 假性 1.0 泄漏）
+
+**修掉两个让 Harrier 被误判的推理 bug**
+1. **右填充 → 左填充**：decoder-only 模型 last-token pooling 用右填充会取到 pad 的隐状态，向量全错。实测 batch=4 时 R@1 从 0.95 掉到 0.15，改用左填充恢复
+2. **ONNX 导出差异**：`onnx-community` 部分导出已内置 pooling（输出 `sentence_embedding`，只有 2 个输入），需与「需自行 pooling」的导出区分处理；Octen 的输出 batch 维度硬编码为 1，只能 batch=1
+
+**Qwen3 系必须加 query instruction**
+- 官方 `web_search_query` 前缀：`Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `；documents 不加
+
 ## v5.9（2026-11-25）
 
 **语义检索（跨语言）——模型换代**
