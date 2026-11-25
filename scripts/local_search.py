@@ -284,32 +284,89 @@ EMB_MODEL = os.environ.get("PUA_EMB_MODEL",
                            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 EMB_PATH = os.environ.get("PUA_EMB_PATH", "")   # 指向本地模型目录则完全离线
 HARRIER_DIR = os.environ.get("PUA_HARRIER_DIR", "/sandbox/workspace/models/harrier-0.6b")
+# Google EmbeddingGemma-300m（2026 Q4 实测第一：R@1=0.733 / 197MB / 768 维 / HF trending 榜首）
+GEMMA_DIR = os.environ.get("PUA_GEMMA_DIR", "/sandbox/workspace/models/embeddinggemma300")
+GEMMA_QI = "task: search result | query: "     # 官方 query 前缀
+GEMMA_DI = "title: none | text: "             # 官方 document 前缀
 # Qwen3 系（Harrier/Octen/Qwen3）官方规定：query 加 instruction，documents 不加
 QI = ("Instruct: Given a web search query, retrieve relevant passages "
       "that answer the query\nQuery: ")
 
 
 def EMB_MODEL_TAG():
-    if os.environ.get("PUA_EMB_BACKEND", "") != "minilm" and os.path.isfile(
-            os.path.join(HARRIER_DIR, "onnx", "model_q4.onnx")):
+    be = os.environ.get("PUA_EMB_BACKEND", "")
+    if be not in ("minilm", "harrier") and os.path.isfile(
+            os.path.join(GEMMA_DIR, "onnx", "model_q4.onnx")):
+        return "EmbeddingGemma-300m q4 (768d)"
+    if be != "minilm" and os.path.isfile(os.path.join(HARRIER_DIR, "onnx", "model_q4.onnx")):
         return "Harrier-OSS-V1-0.6B q4 (1024d)"
     return EMB_MODEL
+
+
+class _GemmaWrapper:
+    """EmbeddingGemma-300m：encoder + mean pooling，必须关 padding（ONNX 图对变长 batch 不兼容），
+    且 query/document 各需官方前缀。逐条推理，150 条约 2 分钟。"""
+    _ready = False
+
+    def embed(self, texts, batch_size=None):
+        import qwen3_emb
+        if not self.__class__._ready:      # 只在首次重置，否则每次调用都重载模型（慢 10 倍）
+            qwen3_emb._sess = None
+            qwen3_emb._tok = None
+            self.__class__._ready = True
+        os.environ["QWEN3_EMB_DIR"] = GEMMA_DIR
+        os.environ["QWEN3_EMB_FILE"] = "model_q4.onnx"
+        os.environ["QWEN3_POOL"] = "mean"
+        os.environ["QWEN3_NOPAD"] = "1"
+        return iter(qwen3_emb.embed(list(texts), batch=1))
 
 
 class _HarrierWrapper:
     """把 Harrier 的独立推理器包成 fastembed 风格的 .embed() 接口。
     decoder-only + last-token pooling，必须左填充（右填充会取到 pad 的隐状态）；batch=8 是内存甜蜜点。"""
+    _ready = False
+
     def embed(self, texts, batch_size=None):
         import qwen3_emb
+        if not self.__class__._ready:
+            qwen3_emb._sess = None
+            qwen3_emb._tok = None
+            self.__class__._ready = True
+        os.environ["QWEN3_EMB_DIR"] = HARRIER_DIR
+        os.environ["QWEN3_EMB_FILE"] = "model_q4.onnx"
+        os.environ["QWEN3_POOL"] = "last"
+        os.environ["QWEN3_PAD"] = "left"
+        os.environ.pop("QWEN3_NOPAD", None)
         return iter(qwen3_emb.embed(list(texts), batch=int(os.environ.get("PUA_EMB_BATCH", "8"))))
+
+
+def _is_gemma():
+    return (os.environ.get("PUA_EMB_BACKEND", "") not in ("minilm", "harrier")
+            and os.path.isfile(os.path.join(GEMMA_DIR, "onnx", "model_q4.onnx")))
+
+
+def _doc_prefix():
+    return GEMMA_DI if _is_gemma() else ""
+
+
+def _query_prefix():
+    if _is_gemma():
+        return GEMMA_QI
+    if os.path.isfile(os.path.join(HARRIER_DIR, "onnx", "model_q4.onnx")):
+        return os.environ.get("PUA_QI", QI)
+    return ""
 
 
 def _model():
     import os as _os
-    # ① 首选 Harrier（存在即用，可 PUA_EMB_BACKEND=minilm 强制回退）
+    be = _os.environ.get("PUA_EMB_BACKEND", "")
+    # ① 首选 EmbeddingGemma-300m（实测最强，最小）
+    if be not in ("minilm", "harrier") and _os.path.isfile(
+            _os.path.join(GEMMA_DIR, "onnx", "model_q4.onnx")):
+        return _GemmaWrapper()
+    # ② Harrier
     hp = HARRIER_DIR
-    if _os.environ.get("PUA_EMB_BACKEND", "") != "minilm" and _os.path.isfile(
-            _os.path.join(hp, "onnx", "model_q4.onnx")):
+    if be != "minilm" and _os.path.isfile(_os.path.join(hp, "onnx", "model_q4.onnx")):
         _os.environ["QWEN3_EMB_DIR"] = hp
         _os.environ["QWEN3_EMB_FILE"] = "model_q4.onnx"
         return _HarrierWrapper()
@@ -336,13 +393,26 @@ def cmd_embed(args):
     if not todo:
         print("所有文档已有向量"); return 0
     m = _model()
-    BATCH = 50
+    BATCH = int(os.environ.get("PUA_EMB_BATCH", "50"))
     done = 0
     for s in range(0, len(todo), BATCH):
         chunk = todo[s:s+BATCH]
-        texts = [(t or "") + " " + (b or "")[:1200] for _, t, b in chunk]
-        vecs = list(m.embed(texts))
+        _dp = _doc_prefix()
+        texts = [_dp + (t or "") + " " + (b or "")[:1200] for _, t, b in chunk]
+        try:
+            vecs = list(m.embed(texts))
+        except Exception as e:
+            print(f"  批 {s} 失败（{type(e).__name__} {str(e)[:60]}），逐条重试", flush=True)
+            vecs = []
+            for one in texts:
+                try:
+                    vecs.append(list(m.embed([one]))[0])
+                except Exception as e2:
+                    vecs.append(None)
+                    print(f"    单条失败 {type(e2).__name__}: {str(e2)[:50]}", flush=True)
         for (i, _, _), v in zip(chunk, vecs):
+            if v is None:
+                continue
             a = np.array(v, dtype="float32")
             c.execute("INSERT OR REPLACE INTO vectors(doc_id,dim,vec,model) VALUES(?,?,?,?)",
                       (i, len(a), a.tobytes(), EMB_MODEL_TAG()))
@@ -371,7 +441,7 @@ def cmd_sem(args):
     m = _model()
     # Qwen3 系（Harrier）官方要求 query 加 instruction 前缀，documents 不加；
     # 不加前缀短 query 对长文档的匹配会明显退化。
-    qtext = os.environ.get("PUA_QI", QI) + args.query
+    qtext = _query_prefix() + args.query
     qv = list(m.embed([qtext]))[0]
     top = _cosine_top(qv, rows, args.limit)
     print(f"=== {len(top)} 条（语义检索 · {EMB_MODEL_TAG()}） ===")
@@ -402,7 +472,7 @@ def cmd_hybrid(args):
     if vec_rows:
         import numpy as np
         m = _model()
-        qv = list(m.embed([os.environ.get("PUA_QI", QI) + q]))[0]
+        qv = list(m.embed([_query_prefix() + q]))[0]
         sem_ids = [d for d, _ in _cosine_top(qv, vec_rows, 30)]
     # RRF
     score = {}
