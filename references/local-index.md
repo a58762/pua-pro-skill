@@ -61,8 +61,10 @@ python3 scripts/local_search.py stats
 | 法 | Next / LinuxFr | ✅ |
 | 西 | Hipertextual | ✅ |
 | 葡(巴西) | TabNews | ✅ |
+| AI 专源 | arXiv cs.AI（`rss.arxiv.org`）/ Zenn AI 主题 / Qiita AI 标签 / Simon Willison / HN 搜 LLM | ✅ |
 
-不可达：Heise（DNS 污染）、Tweakers（403）、OKKY（403）、Velog（404）
+不可达：Heise（DNS 污染）、Tweakers（403）、OKKY（403）、Velog（404）、
+`huggingface.co/blog/feed.xml`（000 超时）、`news.ycombinator.com/rss`（000，改走 Algolia API）
 
 ## 正文抓取：解决"搜不到正文里的词"
 
@@ -107,10 +109,33 @@ python3 scripts/local_search.py index --fetch-body --body-limit 6
 
 **解决什么**：词面匹配救不了同义与跨语言——搜「大语言模型」找不到只写了「LLM」的文章。
 
-**方案**：fastembed + `BAAI/bge-small-en-v1.5`（384 维）
-- 模型下载走 `HF_ENDPOINT=https://hf-mirror.com`（HuggingFace 直连不通）
-- 向量存 SQLite BLOB，余弦相似度用 numpy 算（400 条毫秒级）
-- 批量 embed（每批 50 条），一次 411 条约 1 分钟
+**模型选型（按实证选，不按名气压）**：
+
+| 模型 | 可下载 | 维度 | 结论 |
+|---|---|---|---|
+| `BAAI/bge-small-en-v1.5` | ✅ | 384 | 纯英文模型，中↔日仅 0.488，**淘汰** |
+| `paraphrase-multilingual-MiniLM-L12-v2` | ✅ | 384 | 50+ 语种，中↔日 0.980、中↔英 0.969，**现用** |
+| `Qwen3-Embedding-0.6B` int8 ONNX | ✅ 585MB | 1024 | MTEB 多语言强于 gemini-embedding-001，已落地 `bin/qwen3_emb.py` |
+| `Qwen3-Embedding-8B` | ✅ 但 15GB | 7168 | RTEB 检索榜第 1，本机放不下 |
+| Gemini Embedding | ❌ **专有，官方标注 Self-host: No** | 3072 | 只能调 API；各榜名次不一致 |
+| `harrier-oss-v1-27b`（微软 MIT） | ✅ 但 27B | — | MTEB Multilingual v2 榜首，本机放不下 |
+
+**"某榜第一"不可信**：同一个 gemini-embedding-2，在一篇日文实测里跨语言排名第 1，在另一份 Borda 综合榜里排第 10。榜单构造、任务集、top-k 都会改结论。
+**余弦绝对值不能跨模型比较**：老模型的向量空间容易塌缩在 0.9+，看着"相似度高"，实际区分度差。MiniLM 中↔日 0.980 而 Qwen3 只有 0.767，不代表 MiniLM 更强。
+**唯一可靠比较方式**：self-retrieval recall@k（拿正文中段句当 query，看能否检索回原文），见 `scripts/cmp_embed.py`。
+
+**本机实测（150 条语料 / 20 条 query，2026-11-25）**：
+
+| 模型 | 维度 | R@1 | R@5 |
+|---|---|---|---|
+| MiniLM-multilingual | 384 | **0.200** | **0.300** |
+| Qwen3-Embedding-0.6B int8 | 1024 | 0.150 | 0.300 |
+| Qwen3-Embedding-0.6B int8 + instruct | 1024 | 0.200 | 0.250 |
+
+**结论：榜单不算数，本场景持平 → 继续用 MiniLM。** 体积小 10 倍（384 维 vs 1024 维），加载快，效果不输。
+样本量小（20 query），差异不显著；但「没有明显优势」这一点已足以支撑选型——没必要为账面排名付 10 倍的存储和计算代价。
+
+**实测到的硬限制**：4GB 内存下 Qwen3 int8 的 **batch 必须 ≤ 4**，batch=16 会被 OOM 直接杀掉（没有 traceback，表现为静默退出，排查花了很久）。
 
 **三种检索模式**：
 
@@ -120,12 +145,37 @@ python3 scripts/local_search.py index --fetch-body --body-limit 6
 | `sem` | 纯向量余弦 | 描述性/模糊查询 |
 | `hybrid` | BM25 + 向量，RRF 融合 | **默认推荐** |
 
-**实测跨语言能力**：
+**实测跨语言能力**（MiniLM-multilingual，414→571 条语料）：
 ```
-中文查询「大语言模型」→ 命中日文「OpenAI の dots」「ChatGPT の AI エージェント」
-英文查询「artificial intelligence model」→ 命中日文「ローカルLLM入門」
+中文「大语言模型的推理论文」→ arXiv 三篇（0.676 / 0.663 / 0.627）
+中文「大语言模型」 vs 日文「大規模言語モデル」→ 0.980
+中文「开源软件的安全性」 vs 英文「open source software security」→ 0.949
 ```
 词面匹配绝对做不到这件事。
+
+## JS 渲染：抓 React/Vue 空壳站（2026-11-25 落地）
+
+**问题**：现代站点正文由 JS 渲染，`requests` 拿到的 HTML 只有 `<div id="root"></div>`，trafilatura 提取出 0 字。
+
+**社区怎么解**（多语种核对）：
+- 德/俄/英三个语种的检索结果指向同一结论：**纯 HTTP 客户端看不到 JS 内容，必须渲染**。
+- 商用方案是 API 代渲染（Firecrawl、olostep、browserless），要钱。
+- 开源自托管两条路：**Crawl4AI**（Apache 2.0，但依赖 Playwright/Chromium ~2GB）、**fastCRW**（Rust 单二进制，渲染器自动档 `chrome → lightpanda → http`）。
+- 关键发现是 **lightpanda**：Zig 从零写的 headless 浏览器，**75MB（Chromium 约 2GB）、快 9–16 倍、省 10–16 倍内存**，走 CDP 协议。
+
+**落地**：`bin/lightpanda`（1.0.5）+ 三级抓取
+```
+trafilatura（HTTP，F1 0.937，最快）
+   ↓ 正文 < 300 字
+lightpanda fetch --dump markdown（真渲染）
+   ↓ 仍失败
+空
+```
+绝大多数站第一级就够，只有 React/Vue 空壳站才进第二级，不会为了少数站拖慢整体。
+
+**实测**：`https://react.dev/learn` → 7,967 字正文（含标题/列表/代码块）；trafilatura 对同一页只能拿到 0 字。
+
+**另一条零成本路**：SSR 框架会把数据序列化进 HTML（`__NEXT_DATA__`、`window.__INITIAL_STATE__`、`__APOLLO_STATE__`、Nuxt payload），直接从 HTML 里抠 JSON 就能拿到内容，不需要渲染。这条路对本仓库的「只取正文」目标收益有限，但可用于结构化数据抽取。
 
 ## 并发抓取
 
@@ -144,9 +194,11 @@ python3 scripts/local_search.py crawl https://lwn.net/Articles/ --limit 3 --dept
 ## 定时更新
 
 ```bash
-bash scripts/update_index.sh          # 抓源 + 抓正文 + 生成向量 + 统计
-# cron: 0 7 * * * bash /path/to/scripts/update_index.sh
+bash scripts/refresh.sh          # 抓源 + 补正文 + 生成向量；目录锁防叠跑，日志 refresh.log
+# cron: 17 7 * * * bash /path/to/scripts/refresh.sh     （分钟数用非整点，避开高峰）
 ```
+环境变量：`PUA_BODY_LIMIT`（本次补抓正文条数，默认 10）、`PUA_WORKERS`（并发，默认 12）。
+**注意**：`--fetch-body` 走真实网络，20+ 源全跑完需要数分钟，cron 里建议放后台或直接由 cron 承担。
 
 ## 与 Firecrawl 的对比（402 的那个）
 
@@ -157,11 +209,12 @@ bash scripts/update_index.sh          # 抓源 + 抓正文 + 生成向量 + 统�
 | crawl（整站） | ✅ 额度受限 | ✅ 无限制（自己控速） |
 | map（列 URL） | ✅ | ✅ sitemap/首页 |
 | 语义检索 | ❌ 无 | ✅ 跨语言 |
+| JS 渲染 | ✅ 云端浏览器集群 | ✅ lightpanda（75MB 本地，无额度） |
 | 成本 | 402 后停摆 | **0** |
 | 数据归属 | 在对方服务器 | **本地 SQLite，自己拥有** |
 
-**超越点**：语义检索（Firecrawl 没有）、无限额度、数据自主。
-**不如它**：全网覆盖（它有自己的抓取基础设施与代理池）、JS 渲染、反爬对抗。
+**超越点**：语义检索（Firecrawl 没有）、无限额度、数据自主、JS 渲染不消耗外部额度。
+**仍不如它**：全网覆盖与代理池（它有自建抓取基础设施）、强反爬站点（Cloudflare 挑战页等）、SERP 级搜索广度。
 
 ## 关键设计点
 
