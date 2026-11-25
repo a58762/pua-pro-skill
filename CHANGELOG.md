@@ -2,21 +2,37 @@
 
 ## v5.9（2026-11-25）
 
-**语义检索（跨语言）**
-- fastembed + bge-small-en-v1.5（384 维），模型经 hf-mirror 下载
-- 新增 `sem`（纯向量）与 `hybrid`（BM25 + 向量 RRF 融合）
-- 实测：中文「大语言模型」命中日文 OpenAI 报道；英文「artificial intelligence model」命中「ローカルLLM入門」
-- 411 条向量，批量 50 条提交，约 1 分钟
+**语义检索（跨语言）——模型换代**
+- 淘汰 `bge-small-en-v1.5`（纯英文模型，中↔日仅 0.488）
+- 换 `paraphrase-multilingual-MiniLM-L12-v2`（50+ 语种，384 维）：中↔日 **0.980**、中↔英 **0.969**、中「开源软件安全性」↔英「open source software security」0.949
+- 本地模型落 `models/multilingual-minilm/`（585MB），`dl_chunks.py` 分片并发 2.8MB/s（单连接仅 150KB/s）
+- 新增 `bin/qwen3_emb.py`：Qwen3-Embedding-0.6B int8 ONNX 独立推理器（1024 维）。fastembed 未收录，故用 onnxruntime + tokenizers，手工处理 KV-cache 输入（传 past_len=0）与 last-token pooling
+- 新增 `scripts/cmp_embed.py` / `cmp_qwen3_only.py`：self-retrieval R@1/R@5 对照实验。**余弦绝对值不可跨模型比较**（老模型向量空间塌缩在 0.9+，区分度反而差）
+- **实测结论：Qwen3-Embedding-0.6B int8（1024 维）在本场景与 MiniLM（384 维）持平**——R@1 0.200 vs 0.200，R@5 0.250 vs 0.300（加官方 instruct 前缀后）。故**继续用 MiniLM**，省 10 倍存储与计算
+- 硬限制：4GB 内存下 Qwen3 int8 的 batch 必须 ≤4，batch=16 被 OOM 静默杀掉（无 traceback，排查耗时）
+- 结论记录：Gemini Embedding 是专有模型（官方 Self-host: No），不可下载；「某榜第一」在不同榜上互相矛盾（gemini-embedding-2 在一篇日文实测里跨语言第 1，在 Borda 综合榜里第 10）
 
-**并发抓取**
-- `--workers 12`，120 篇正文从 ~6 分钟降到 ~1 分钟
+**JS 渲染（最大短板补齐）**
+- 引入 lightpanda 1.0.5（Zig 写的 headless 浏览器，单文件 75MB vs Chromium 2GB，快 9–16 倍、省 10–16 倍内存，走 CDP）
+- 选型依据：fastCRW 的渲染器自动档 `chrome → lightpanda → http`；Crawl4AI 虽开源但依赖 Playwright/Chromium
+- `extract_body` 改三级：trafilatura → 正文 <300 字则 lightpanda `--dump markdown` → 空
+- 实测 `react.dev/learn`：trafilatura 提取 0 字 → lightpanda 7,967 字（含标题/列表/代码块）
+- `crawl` 同步接入，并过滤静态资源（`.woff2/.css/.js/.webmanifest` 等 23 类），修掉抓到字体文件的脏数据
 
-**crawl / map（补齐 Firecrawl）**
+**语料扩容**
+- 新增 5 个 AI 一手源：arXiv cs.AI（`rss.arxiv.org`，500KB）、Zenn AI 主题、Qiita AI 标签、Simon Willison、HN 搜 LLM
+- 修 `parse_api`：原按源名硬编码（只认 hn/qiita），新源全部静默返回 0；改为按数据结构判断（dict+hits=Algolia，list=Qiita）
+- 语料 414 → 571 条；含「LLM」文档 12 → 54 条，「language model」0 → 23 条
+- 验证：中文「大语言模型的推理论文」→ 三篇 arXiv，0.676/0.663/0.627（换代前 0.4x 且不相关）
+
+**并发 / crawl / map**
+- `--workers 12`，120 篇正文 ~6 分钟 → ~1 分钟
 - `map`：sitemap.xml 优先，退化首页链接
-- `crawl`：BFS 同域抓取 + trafilatura 正文 + 入库
+- `crawl`：BFS 同域 + 渲染兜底 + 静态资源过滤
 
 **定时更新**
-- `scripts/update_index.sh`：抓源 → 正文 → 向量 → 统计，可挂 cron
+- `scripts/refresh.sh`：目录锁 + pid + 租约（避开 flock 的 fd 被 setsid 子进程继承导致永久占锁的坑）、有界抓取、日志落 `refresh.log`
+- 环境变量 `PUA_BODY_LIMIT` / `PUA_WORKERS` 可调
 
 **与 Firecrawl(402) 的对比**
 - 超越：语义检索（它没有）、无限额度、数据本地自主
