@@ -31,6 +31,16 @@ MODELS = {
                 "dir": "/sandbox/workspace/models/harrier-0.6b", "file": "model_q4.onnx"},
     "octen":   {"dim": 1024, "kind": "onnx", "prompt": QI,
                 "dir": "/sandbox/workspace/models/octen-0.6b", "file": "model.int8_full.onnx"},
+    "gemma300": {"dim": 768, "kind": "onnx", "pool": "mean", "nopad": "1",
+                 "prompt": "task: search result | query: ",
+                 "doc_prompt": "title: none | text: ",
+                 "dir": "/sandbox/workspace/models/embeddinggemma300", "file": "model_q4.onnx"},
+    "gemma2":  {"dim": 768, "kind": "onnx", "pool": "mean", "nopad": "1",
+                "prompt": "task: search result | query: ",
+                "doc_prompt": "title: none | text: ",
+                "dir": "/sandbox/workspace/models/embeddinggemma2", "file": "model_q4.onnx"},
+    "bge_m3":  {"dim": 1024, "kind": "onnx", "prompt": "", "pool": "cls", "pad": "right",
+                "dir": "/sandbox/workspace/models/bge-m3", "file": "model_int8.onnx"},
     "qwen3":   {"dim": 1024, "kind": "onnx", "prompt": QI,
                 "dir": "/sandbox/workspace/models/qwen3-emb-0.6b", "file": "model_int8.onnx"},
 }
@@ -46,7 +56,9 @@ def main():
     docs = [rows[i] for i in idx]
     gold = [pos[d[0]] for d in docs]
     queries = [pick_sentence(d[2], d[1]) for d in docs]
-    texts = [(r[2] or "")[:1200] for r in rows]   # 不含标题：标题做 query，正文做 doc，无泄漏
+    DL = int(os.environ.get("DOCLEN", "1200"))
+    dp = cfg.get("doc_prompt", "")
+    texts = [dp + (r[2] or "")[:DL] for r in rows]   # 不含标题：标题做 query，正文做 doc，无泄漏
 
     if cfg["kind"] == "fastembed":
         from fastembed import TextEmbedding
@@ -57,6 +69,12 @@ def main():
     else:
         os.environ["QWEN3_EMB_DIR"] = cfg["dir"]
         os.environ["QWEN3_EMB_FILE"] = cfg["file"]
+        if cfg.get("pool"):
+            os.environ["QWEN3_POOL"] = cfg["pool"]
+        if cfg.get("pad"):
+            os.environ["QWEN3_PAD"] = cfg["pad"]
+        if cfg.get("nopad"):
+            os.environ["QWEN3_NOPAD"] = cfg["nopad"]
         import qwen3_emb
         V = qwen3_emb.embed(texts, batch=int(os.environ.get("BATCH", "4")))
         pq = [cfg.get("prompt", "") + q for q in queries]
