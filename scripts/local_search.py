@@ -51,6 +51,12 @@ SOURCES = {
     "lwn":    ("LWN（英）", "rss", "https://lwn.net/headlines/rss"),
     "phoronix":("Phoronix（英）", "rss", "https://www.phoronix.com/rss.php"),
     "osnews": ("OSNews（英）", "rss", "https://www.osnews.com/feed/"),
+    # —— AI / 大模型一手源（2026-11-25 实测可达；HF 官方 blog 与 news.ycombinator.com/rss 被墙，不用）——
+    "arxiv_ai": ("arXiv cs.AI 论文", "rss", "https://rss.arxiv.org/rss/cs.AI"),
+    "zenn_ai":  ("Zenn AI 主题（日）", "rss", "https://zenn.dev/topics/ai/feed"),
+    "qiita_ai": ("Qiita AI 标签（日）", "api", "https://qiita.com/api/v2/items?per_page=20&query=tag%3AAI"),
+    "simonw":   ("Simon Willison（英·AI 一手）", "rss", "https://simonwillison.net/atom/everything/"),
+    "hn_ai":    ("HN 搜 LLM", "api", "https://hn.algolia.com/api/v1/search?query=LLM&tags=story&hitsPerPage=30"),
 }
 
 def conn():
@@ -89,19 +95,57 @@ def get(url, timeout=20, retries=2):
             last = e; time.sleep(1)
     raise last
 
-def extract_body(url, timeout=15):
-    """用 trafilatura 抓正文（社区评测 F1 最高，Newspaper3k 已淘汰）"""
-    try:
-        import trafilatura
-    except ImportError:
+# 轻量 headless 浏览器：Zig 写的 lightpanda，单文件 75MB（Chromium 约 2GB），走 CDP，
+# 选型依据：fastCRW 的渲染器自动档 chrome→lightpanda→http；社区实测比 Chromium 快 9-16 倍、省 10-16 倍内存
+LIGHTPANDA = os.environ.get("PUA_LIGHTPANDA", "/sandbox/workspace/bin/lightpanda")
+
+
+def _render_js(url, timeout=25):
+    """JS 渲染兜底：lightpanda --dump markdown。仅静态抽取不足时才调用（贵）。"""
+    import subprocess
+    if not (os.path.isfile(LIGHTPANDA) and os.access(LIGHTPANDA, os.X_OK)):
         return ""
     try:
+        r = subprocess.run([LIGHTPANDA, "fetch", "--dump", "markdown", url],
+                           capture_output=True, timeout=timeout)
+        return (r.stdout or b"").decode("utf-8", "ignore").strip()
+    except Exception:
+        return ""
+
+
+def extract_body(url, timeout=15, render=None):
+    """三级抓取：trafilatura（F1 0.937，最快）→ 不足 300 字则 lightpanda 渲染 → 空。
+    绝大多数站第一级就够；只有 React/Vue 空壳站才走渲染，省时间。
+    render=None 时读环境变量 PUA_RENDER（默认开）。"""
+    body = ""
+    try:
+        import trafilatura
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             html = r.read().decode("utf-8", "ignore")
-        return (trafilatura.extract(html) or "")[:8000]
+        body = trafilatura.extract(html) or ""
     except Exception:
-        return ""
+        pass
+    if len(body) >= 300:
+        return body[:8000]
+    want = render if render is not None else os.environ.get("PUA_RENDER", "1") != "0"
+    if want:
+        js = _render_js(url)
+        if len(js) > len(body):
+            body = js
+    return body[:8000]
+
+
+def _clean_md(t):
+    """剥掉 lightpanda markdown 输出的代码围栏与 frontmatter，避免污染检索。"""
+    t = t.strip()
+    if t.startswith("```"):
+        t = t[3:].lstrip()
+    if t.startswith("---"):
+        head, sep, rest = t[3:].partition("---")
+        if sep and len(head) < 400:
+            t = rest.strip()
+    return t
 
 def parse_rss(raw):
     out = []
@@ -122,16 +166,24 @@ def parse_rss(raw):
     return out
 
 def parse_api(name, raw):
+    """按数据结构判断，不靠源名硬编码——加新源时不必再改这里。
+    Algolia/HN 返回 {"hits":[...]}；Qiita 返回 [...]。"""
     d = json.loads(raw)
     out = []
-    if name == "hn":
+    if isinstance(d, dict) and "hits" in d:
         for h in d.get("hits", []):
-            out.append({"title": h.get("title") or "", "url": h.get("url") or f"https://news.ycombinator.com/item?id={h.get('objectID')}",
-                        "body": (h.get("story_text") or "")[:2000], "ts": h.get("created_at","")})
-    elif name == "qiita":
+            out.append({"title": h.get("title") or "",
+                        "url": h.get("url") or f"https://news.ycombinator.com/item?id={h.get('objectID')}",
+                        "body": (h.get("story_text") or "")[:2000],
+                        "ts": h.get("created_at", "")})
+    elif isinstance(d, list):
         for it in d:
-            out.append({"title": it.get("title",""), "url": it.get("url",""),
-                        "body": (it.get("body") or "")[:3000], "ts": it.get("created_at","")})
+            if not isinstance(it, dict):
+                continue
+            out.append({"title": it.get("title", ""),
+                        "url": it.get("url", ""),
+                        "body": (it.get("body") or "")[:3000],
+                        "ts": it.get("created_at", "")})
     return out
 
 def cmd_index(args):
@@ -212,13 +264,25 @@ def cmd_search(args):
         print(f"   [{s}] {ts[:16]}")
     return 0
 
-EMB_MODEL = os.environ.get("PUA_EMB_MODEL", "BAAI/bge-small-en-v1.5")
+# 多语言模型：跨语言验证 中↔日 0.980 / 中↔英 0.969（英文 bge-small-en 仅 0.488）
+EMB_MODEL = os.environ.get("PUA_EMB_MODEL",
+                           "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+EMB_PATH = os.environ.get("PUA_EMB_PATH", "")   # 指向本地模型目录则完全离线
 
 def _model():
     import os as _os
-    _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
     from fastembed import TextEmbedding
-    return TextEmbedding(model_name=EMB_MODEL)
+    kw = {"model_name": EMB_MODEL}
+    here = _os.path.dirname(_os.path.abspath(__file__))
+    for p in ([EMB_PATH] if EMB_PATH else []) + [
+            _os.path.join(here, "..", "models", "multilingual-minilm"),
+            "/sandbox/workspace/models/multilingual-minilm"]:
+        if p and _os.path.isfile(_os.path.join(p, "model_optimized.onnx")):
+            kw["specific_model_path"] = _os.path.abspath(p)
+            break
+    else:
+        _os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    return TextEmbedding(**kw)
 
 def cmd_embed(args):
     import numpy as np
@@ -310,12 +374,21 @@ def cmd_hybrid(args):
     return 0
 
 def _links(html, base):
+    """抽同站链接，过滤静态资源与附件（字体/图片/样式/脚本），否则 crawl 会抓到 .woff2 这种垃圾"""
     from urllib.parse import urljoin, urlparse
+    SKIP = (".woff2", ".woff", ".ttf", ".eot", ".otf", ".css", ".js", ".mjs",
+            ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".ico",
+            ".pdf", ".zip", ".gz", ".mp4", ".mp3", ".webm", ".json", ".xml",
+            ".webmanifest", ".rss", ".atom", ".txt", ".map")
     out, seen = [], set()
     for m in re.finditer(r'href="([^"#]+)"', html):
         u = urljoin(base, m.group(1))
-        if urlparse(u).netloc == urlparse(base).netloc and u not in seen:
-            seen.add(u); out.append(u)
+        p = urlparse(u)
+        if p.netloc != urlparse(base).netloc or u in seen:
+            continue
+        if p.path.lower().endswith(SKIP):
+            continue
+        seen.add(u); out.append(u)
     return out
 
 def cmd_map(args):
@@ -351,18 +424,19 @@ def cmd_crawl(args):
     added = 0
     while queue and added < args.limit:
         url, depth = queue.pop(0)
+        html = ""
         try:
             html = get(url, timeout=20).decode("utf-8", "ignore")
-        except Exception as e:
-            print(f"  [skip] {url[:60]} {type(e).__name__}"); continue
-        body = ""
-        try:
-            import trafilatura
-            body = (trafilatura.extract(html) or "")[:8000]
         except Exception:
             pass
-        title = re.search(r"<title[^>]*>(.*?)</title>", html, re.S)
-        title = re.sub(r"\s+", " ", title.group(1)).strip() if title else url
+        title_m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S)
+        title = re.sub(r"\s+", " ", title_m.group(1)).strip() if title_m else ""
+        body = _clean_md(extract_body(url, timeout=20, render=True))
+        if not body:
+            print(f"  [skip] {url[:60]} 无正文"); continue
+        if not title:
+            m = re.search(r"title:\s*(.+)", body[:400])
+            title = m.group(1).strip() if m else url
         try:
             cur = c.execute("INSERT OR IGNORE INTO docs(source,title,url,body,ts) VALUES(?,?,?,?,datetime('now'))",
                             (f"crawl:{urlparse(start).netloc}", title[:300], url, body, ))
