@@ -57,6 +57,19 @@ SOURCES = {
     "qiita_ai": ("Qiita AI 标签（日）", "api", "https://qiita.com/api/v2/items?per_page=20&query=tag%3AAI"),
     "simonw":   ("Simon Willison（英·AI 一手）", "rss", "https://simonwillison.net/atom/everything/"),
     "hn_ai":    ("HN 搜 LLM", "api", "https://hn.algolia.com/api/v1/search?query=LLM&tags=story&hitsPerPage=30"),
+    # —— 2026-11-25 扩源实测：12 国本地一手社区全部 200 可达 ——
+    "viblo":     ("Viblo（韩）", "rss", "https://viblo.asia/rss"),
+    "leganerd":  ("Leganerd（意）", "rss", "https://www.leganerd.com/feed/"),
+    "webrazzi":  ("Webrazzi（土）", "rss", "https://webrazzi.com/feed/"),
+    "dou":       ("DOU（乌克兰）", "rss", "https://dou.ua/feed/"),
+    "bright":    ("Bright（荷）", "rss", "https://bright.nl/rss"),
+    "detikinet": ("detikInet（印尼）", "rss", "https://inet.detik.com/rss"),
+    "aim":       ("Analytics India Mag（印）", "rss", "https://analyticsindiamag.com/feed/"),
+    "aitnews":   ("AITnews（阿联酋）", "rss", "https://www.aitnews.com/feed/"),
+    "idgse":     ("IDG（瑞典）", "rss", "https://www.idg.se/rss"),
+    "mikrobitti":("MikroBitti（芬兰）", "rss", "https://www.mikrobitti.fi/rss"),
+    "bitport":   ("Bitport（匈牙利）", "rss", "https://bitport.hu/rss"),
+    "digi":      ("Digi（挪威）", "rss", "https://www.digi.no/rss"),
 }
 
 def conn():
