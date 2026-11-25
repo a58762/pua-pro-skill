@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## v5.9（2026-11-25）
+
+**语义检索（跨语言）**
+- fastembed + bge-small-en-v1.5（384 维），模型经 hf-mirror 下载
+- 新增 `sem`（纯向量）与 `hybrid`（BM25 + 向量 RRF 融合）
+- 实测：中文「大语言模型」命中日文 OpenAI 报道；英文「artificial intelligence model」命中「ローカルLLM入門」
+- 411 条向量，批量 50 条提交，约 1 分钟
+
+**并发抓取**
+- `--workers 12`，120 篇正文从 ~6 分钟降到 ~1 分钟
+
+**crawl / map（补齐 Firecrawl）**
+- `map`：sitemap.xml 优先，退化首页链接
+- `crawl`：BFS 同域抓取 + trafilatura 正文 + 入库
+
+**定时更新**
+- `scripts/update_index.sh`：抓源 → 正文 → 向量 → 统计，可挂 cron
+
+**与 Firecrawl(402) 的对比**
+- 超越：语义检索（它没有）、无限额度、数据本地自主
+- 不如：全网覆盖、JS 渲染、反爬对抗
+
 ## v5.8（2026-11-24）
 
 **多语种扩充**
