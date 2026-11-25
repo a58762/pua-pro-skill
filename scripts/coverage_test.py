@@ -53,10 +53,10 @@ def country_of(src):
 
 
 def main():
-    import qwen3_emb
-    from local_search import QI, HARRIER_DIR
-    os.environ["QWEN3_EMB_DIR"] = HARRIER_DIR
-    os.environ["QWEN3_EMB_FILE"] = "model_q4.onnx"
+    from local_search import _model, _query_prefix, EMB_MODEL_TAG
+    m = _model()
+    QP = _query_prefix()
+    print(f"模型: {EMB_MODEL_TAG()}")
     c = sqlite3.connect(DB)
     rows = c.execute("SELECT doc_id, vec, dim FROM vectors").fetchall()
     M = np.zeros((len(rows), rows[0][2]), dtype="float32")
@@ -72,7 +72,7 @@ def main():
     tally = {}
     hit_own = 0
     for tag, q, want in QUERIES:
-        qv = qwen3_emb.embed([QI + q], batch=1)[0]
+        qv = list(m.embed([QP + q]))[0]
         top = np.argsort(-(M @ qv))[:5]
         got = [country_of(src_of[ids[t]]) for t in top]
         for g in got:
