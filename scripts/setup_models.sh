@@ -2,7 +2,7 @@
 # setup_models.sh —— 首次部署时下载本地检索所需的模型资产（技能本体不含大文件）
 #
 # 下载内容：
-#   1. Harrier-OSS-V1-0.6B q4 ONNX (~399MB) —— 默认语义模型（微软 MIT，MTEB v2 69.0，2026 Q4 最优小模型）
+#   1. EmbeddingGemma-300m q4 ONNX (~197MB) —— 默认语义模型（Google，HF trending 榜首，本机实测 R@1=0.733）
 #   2. lightpanda 1.0.5 (~75MB)             —— JS 渲染兜底（可选，缺了就自动跳过）
 #   3. MiniLM-multilingual (~450MB)         —— 回退模型，仅当 PUA_WANT_MINILM=1
 #
@@ -18,9 +18,34 @@ HF="${HF_ENDPOINT:-https://hf-mirror.com}"
 LP_DIR="${PUA_BIN_DIR:-$SKILL_DIR/bin}"
 mkdir -p "$MODELS" "$LP_DIR"
 
+# 统一下载函数：有 aria2c 用它（实测 17MB/s，比逐块下载快 6 倍），否则回退 dl_chunks
+dl_one() {
+  local url="$1" out="$2" size="$3"
+  if command -v aria2c >/dev/null 2>&1; then
+    aria2c -x16 -s16 -k4M -q --file-allocation=none -o "$(basename "$out")" -d "$(dirname "$out")" "$url" 2>&1 | tail -1
+  else
+    "$PY" "$DL" "$url" "$out" - "$size" 4 32 10 2>&1 | tail -2
+  fi
+}
+
 echo "== 模型目录: $MODELS"
 
 # ---------- 1. Harrier-OSS-V1-0.6B q4（主模型）----------
+GM="$MODELS/embeddinggemma300"
+if [ ! -f "$GM/onnx/model_q4.onnx_data" ]; then
+  mkdir -p "$GM/onnx"
+  echo "-- [1/3] 下载 EmbeddingGemma-300m q4 (197MB)"
+  GB="$HF/onnx-community/embeddinggemma-300m-ONNX/resolve/main"
+  dl_one "$GB/onnx/model_q4.onnx_data" "$GM/onnx/model_q4.onnx_data" 196725760
+  dl_one "$GB/onnx/model_q4.onnx" "$GM/onnx/model_q4.onnx" 519322
+  for f in config.json tokenizer.json tokenizer_config.json special_tokens_map.json; do
+    curl -sL --max-time 120 -o "$GM/$f" "$GB/$f" || true
+  done
+  echo "   完成: $GM"
+else
+  echo "-- [1/3] EmbeddingGemma 已存在，跳过"
+fi
+
 HAR="$MODELS/harrier-0.6b"
 if [ ! -f "$HAR/onnx/model_q4.onnx_data" ]; then
   mkdir -p "$HAR/onnx"
@@ -33,7 +58,7 @@ if [ ! -f "$HAR/onnx/model_q4.onnx_data" ]; then
   done
   echo "   完成: $HAR"
 else
-  echo "-- [1/3] Harrier 已存在，跳过"
+  echo "-- [1b/3] Harrier 已存在，跳过"
 fi
 
 # ---------- 2. lightpanda（JS 渲染）----------
@@ -79,8 +104,10 @@ echo "校验："
 import os, sys
 sys.path.insert(0, os.environ.get("SKILL_DIR", "") + "/scripts") if os.environ.get("SKILL_DIR") else None
 base = os.environ.get("PUA_MODELS_DIR", "/sandbox/workspace/skills/pua-pro/models")
+g = os.path.join(base, "embeddinggemma300", "onnx", "model_q4.onnx_data")
+print(f"  Gemma-300m : {'OK ' + str(os.path.getsize(g)//1048576) + 'MB' if os.path.exists(g) else '缺失（主模型）'}")
 h = os.path.join(base, "harrier-0.6b", "onnx", "model_q4.onnx_data")
-print(f"  Harrier q4 : {'OK ' + str(os.path.getsize(h)//1048576) + 'MB' if os.path.exists(h) else '缺失'}")
+print(f"  Harrier q4 : {'OK ' + str(os.path.getsize(h)//1048576) + 'MB' if os.path.exists(h) else '未安装'}")
 m = os.path.join(base, "multilingual-minilm", "model_optimized.onnx")
 print(f"  MiniLM(回退): {'OK ' + str(os.path.getsize(m)//1048576) + 'MB' if os.path.exists(m) else '未安装'}")
 for p in [os.environ.get("PUA_BIN_DIR", "/sandbox/workspace/skills/pua-pro/bin") + "/lightpanda"]:
