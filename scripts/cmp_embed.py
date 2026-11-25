@@ -49,7 +49,8 @@ def main():
     docs = [rows[i] for i in idx]
     gold = [pos[d[0]] for d in docs]
     queries = [pick_sentence(d[2], d[1]) for d in docs]
-    texts = [(r[2] or "")[:1200] for r in rows]   # 不含标题：标题做 query，正文做 doc，无泄漏
+    DL = int(os.environ.get("DOCLEN", "1200"))
+    texts = [(r[2] or "")[:DL] for r in rows]   # 不含标题：标题做 query，正文做 doc，无泄漏
     print(f"语料 {len(rows)} 条，query {len(queries)} 条（正文中段句）")
     print(f"样例 query: {queries[0][:70]}\n")
 
