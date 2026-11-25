@@ -264,13 +264,43 @@ def cmd_search(args):
         print(f"   [{s}] {ts[:16]}")
     return 0
 
-# 多语言模型：跨语言验证 中↔日 0.980 / 中↔英 0.969（英文 bge-small-en 仅 0.488）
+# 语义模型优先级（2026-11-25 实测，同口径 150 条 / 30 query）：
+#   Harrier-OSS-V1-0.6B q4  R@1=0.567 R@5=0.767  ← 默认（MIT，399MB，微软，2026 Q4）
+#   MiniLM-multilingual     R@1=0.400 R@5=0.433  ← 回退（450MB，2020）
 EMB_MODEL = os.environ.get("PUA_EMB_MODEL",
                            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 EMB_PATH = os.environ.get("PUA_EMB_PATH", "")   # 指向本地模型目录则完全离线
+HARRIER_DIR = os.environ.get("PUA_HARRIER_DIR", "/sandbox/workspace/models/harrier-0.6b")
+# Qwen3 系（Harrier/Octen/Qwen3）官方规定：query 加 instruction，documents 不加
+QI = ("Instruct: Given a web search query, retrieve relevant passages "
+      "that answer the query\nQuery: ")
+
+
+def EMB_MODEL_TAG():
+    if os.environ.get("PUA_EMB_BACKEND", "") != "minilm" and os.path.isfile(
+            os.path.join(HARRIER_DIR, "onnx", "model_q4.onnx")):
+        return "Harrier-OSS-V1-0.6B q4 (1024d)"
+    return EMB_MODEL
+
+
+class _HarrierWrapper:
+    """把 Harrier 的独立推理器包成 fastembed 风格的 .embed() 接口。
+    decoder-only + last-token pooling，必须左填充（右填充会取到 pad 的隐状态）；batch=8 是内存甜蜜点。"""
+    def embed(self, texts, batch_size=None):
+        import qwen3_emb
+        return iter(qwen3_emb.embed(list(texts), batch=int(os.environ.get("PUA_EMB_BATCH", "8"))))
+
 
 def _model():
     import os as _os
+    # ① 首选 Harrier（存在即用，可 PUA_EMB_BACKEND=minilm 强制回退）
+    hp = HARRIER_DIR
+    if _os.environ.get("PUA_EMB_BACKEND", "") != "minilm" and _os.path.isfile(
+            _os.path.join(hp, "onnx", "model_q4.onnx")):
+        _os.environ["QWEN3_EMB_DIR"] = hp
+        _os.environ["QWEN3_EMB_FILE"] = "model_q4.onnx"
+        return _HarrierWrapper()
+    # ② 回退 MiniLM
     from fastembed import TextEmbedding
     kw = {"model_name": EMB_MODEL}
     here = _os.path.dirname(_os.path.abspath(__file__))
@@ -302,7 +332,7 @@ def cmd_embed(args):
         for (i, _, _), v in zip(chunk, vecs):
             a = np.array(v, dtype="float32")
             c.execute("INSERT OR REPLACE INTO vectors(doc_id,dim,vec,model) VALUES(?,?,?,?)",
-                      (i, len(a), a.tobytes(), EMB_MODEL))
+                      (i, len(a), a.tobytes(), EMB_MODEL_TAG()))
         c.commit()
         done += len(chunk)
         print(f"  进度 {done}/{len(todo)}", flush=True)
@@ -326,9 +356,12 @@ def cmd_sem(args):
     if not rows:
         print("没有向量，先跑 embed", file=sys.stderr); return 1
     m = _model()
-    qv = list(m.embed([args.query]))[0]
+    # Qwen3 系（Harrier）官方要求 query 加 instruction 前缀，documents 不加；
+    # 不加前缀短 query 对长文档的匹配会明显退化。
+    qtext = os.environ.get("PUA_QI", QI) + args.query
+    qv = list(m.embed([qtext]))[0]
     top = _cosine_top(qv, rows, args.limit)
-    print(f"=== {len(top)} 条（语义检索 · {EMB_MODEL}） ===")
+    print(f"=== {len(top)} 条（语义检索 · {EMB_MODEL_TAG()}） ===")
     for i, (doc_id, sim) in enumerate(top, 1):
         d = c.execute("SELECT title,url,source FROM docs WHERE id=?", (doc_id,)).fetchone()
         if d:
@@ -356,7 +389,7 @@ def cmd_hybrid(args):
     if vec_rows:
         import numpy as np
         m = _model()
-        qv = list(m.embed([q]))[0]
+        qv = list(m.embed([os.environ.get("PUA_QI", QI) + q]))[0]
         sem_ids = [d for d, _ in _cosine_top(qv, vec_rows, 30)]
     # RRF
     score = {}
