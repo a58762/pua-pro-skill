@@ -102,6 +102,67 @@ python3 scripts/local_search.py index --fetch-body --body-limit 6
 碰到了不认识的领域 → Tavily（付费、懂语义）
 ```
 
+
+## 语义检索：跨语言找内容（2026-11-25 落地）
+
+**解决什么**：词面匹配救不了同义与跨语言——搜「大语言模型」找不到只写了「LLM」的文章。
+
+**方案**：fastembed + `BAAI/bge-small-en-v1.5`（384 维）
+- 模型下载走 `HF_ENDPOINT=https://hf-mirror.com`（HuggingFace 直连不通）
+- 向量存 SQLite BLOB，余弦相似度用 numpy 算（400 条毫秒级）
+- 批量 embed（每批 50 条），一次 411 条约 1 分钟
+
+**三种检索模式**：
+
+| 命令 | 原理 | 适合 |
+|---|---|---|
+| `search` | FTS5 + BM25 | 关键词明确 |
+| `sem` | 纯向量余弦 | 描述性/模糊查询 |
+| `hybrid` | BM25 + 向量，RRF 融合 | **默认推荐** |
+
+**实测跨语言能力**：
+```
+中文查询「大语言模型」→ 命中日文「OpenAI の dots」「ChatGPT の AI エージェント」
+英文查询「artificial intelligence model」→ 命中日文「ローカルLLM入門」
+```
+词面匹配绝对做不到这件事。
+
+## 并发抓取
+
+`--workers 12`（默认 8）。120 篇正文从串行 6 分钟降到约 1 分钟。
+
+## crawl / map：补齐 Firecrawl 的能力
+
+```bash
+python3 scripts/local_search.py map https://lwn.net --limit 50    # 列站点 URL（sitemap 优先）
+python3 scripts/local_search.py crawl https://lwn.net/Articles/ --limit 3 --depth 1
+```
+
+- `map`：先试 `/sitemap.xml`，取不到就解析首页链接
+- `crawl`：BFS 抓同域页面，正文用 trafilatura 提取，入库时源标记为 `crawl:<域名>`
+
+## 定时更新
+
+```bash
+bash scripts/update_index.sh          # 抓源 + 抓正文 + 生成向量 + 统计
+# cron: 0 7 * * * bash /path/to/scripts/update_index.sh
+```
+
+## 与 Firecrawl 的对比（402 的那个）
+
+| 能力 | Firecrawl | local_search |
+|---|---|---|
+| search | ✅ 额度受限 | ✅ 本地 BM25+向量，无限 |
+| scrape（单页正文） | ✅ | ✅ Trafilatura |
+| crawl（整站） | ✅ 额度受限 | ✅ 无限制（自己控速） |
+| map（列 URL） | ✅ | ✅ sitemap/首页 |
+| 语义检索 | ❌ 无 | ✅ 跨语言 |
+| 成本 | 402 后停摆 | **0** |
+| 数据归属 | 在对方服务器 | **本地 SQLite，自己拥有** |
+
+**超越点**：语义检索（Firecrawl 没有）、无限额度、数据自主。
+**不如它**：全网覆盖（它有自己的抓取基础设施与代理池）、JS 渲染、反爬对抗。
+
 ## 关键设计点
 
 1. **trigram 分词**：默认的 `unicode61` 对中日文无效（整句当一个 token）。`trigram` 按 3 字符滑窗切分，中/日/英通吃。代价是索引变大。
