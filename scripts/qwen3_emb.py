@@ -8,18 +8,39 @@ import os
 import sys
 import numpy as np
 
-D = os.environ.get("QWEN3_EMB_DIR", "/sandbox/workspace/models/qwen3-emb-0.6b")
-F = os.environ.get("QWEN3_EMB_FILE", "model_int8.onnx")   # 可指向 harrier 的 model_q4.onnx
+# ⚠️ 这些必须在 _load() 里读，不能固化成模块级常量——
+# 否则进程内切换模型（local_search 的 _GemmaWrapper / _HarrierWrapper）改环境变量无效
+def _env_dir():
+    return os.environ.get("QWEN3_EMB_DIR", "/sandbox/workspace/models/qwen3-emb-0.6b")
+
+
+def _env_file():
+    return os.environ.get("QWEN3_EMB_FILE", "model_int8.onnx")
+
+
+D = _env_dir()
+F = _env_file()
+# pooling 策略：pre=模型已内置 | last=decoder-only(last-token) | mean=encoder(如 bge-m3 XLM-R)
+# 留空则自动：有 past_key_values → last；只有一个 sentence_embedding 输出 → pre；否则 mean
+def _env_pool():
+    return os.environ.get("QWEN3_POOL", "")
+
+
+def _env_pad():
+    return os.environ.get("QWEN3_PAD", "left")
 _sess = None
 _tok = None
 
 
 def _load():
-    global _sess, _tok
+    global _sess, _tok, POOL, PAD
+    POOL, PAD = _env_pool(), _env_pad()
     if _sess is not None:
         return
     import onnxruntime as ort
     from tokenizers import Tokenizer
+    global D, F
+    D, F = _env_dir(), _env_file()
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     _p1, _p2 = os.path.join(D, "onnx", F), os.path.join(D, F)
@@ -30,7 +51,21 @@ def _load():
     _tok.enable_truncation(max_length=int(os.environ.get("QWEN3_MAXLEN", "512")))
     # decoder-only 模型的 last-token pooling 必须左填充：右填充会让"最后一个位置"落在 pad 上，
     # 取到 pad 的隐状态，向量全错（实测 batch=4 时 R@1 从 0.95 掉到 0.15）
-    _tok.enable_padding(direction="left", pad_id=0, pad_token="<|endoftext|>")
+    # pad token 自动探测：Qwen3 系是 <|endoftext|>，Gemma 是 <pad>，写死会直接算错
+    import json as _json
+    _pt, _pid = "<|endoftext|>", 0
+    try:
+        _cfg = _json.load(open(os.path.join(D, "tokenizer_config.json")))
+        if _cfg.get("pad_token"):
+            _pt = _cfg["pad_token"]
+    except Exception:
+        pass
+    _pid = _tok.token_to_id(_pt)
+    if _pid is None:
+        _pid = 0
+        _pt = _tok.id_to_token(0) or _pt
+    if os.environ.get("QWEN3_NOPAD") != "1":
+        _tok.enable_padding(direction=_env_pad(), pad_id=_pid, pad_token=_pt)
 
 
 def _pre_pooled():
@@ -59,15 +94,25 @@ def embed(texts, batch=16):
         feed = {"input_ids": ids, "attention_mask": mask}
         if "position_ids" in names:
             feed["position_ids"] = np.tile(np.arange(L, dtype=np.int64), (n, 1))
+        # 多模态模型的空输入（embeddinggemma-2 的 image/video/audio 特征，纯文本任务传空）
+        for nm in ("image_features", "video_features", "audio_features"):
+            if nm in names:
+                feed[nm] = np.zeros((1, 512), dtype=np.float32)
         # 该 ONNX 是带 KV-cache 的解码版：空 past（past_len=0）即等价于纯前向
         for nm in names:
             if nm.startswith("past_key_values"):
                 feed[nm] = np.zeros((n, 8, 0, 128), dtype=np.float32)
         res = _sess.run(None, feed)[0]
-        if pre:
+        mode = _env_pool() or ("pre" if pre else ("last" if any(k.startswith("past_key_values") for k in names) else "mean"))
+        if mode == "pre":
             v = res.astype("float32")             # 已是 (n, dim) 句向量
-        else:
-            v = res[:, -1].astype("float32")   # 左填充下最后一位必是真实 token
+        elif mode == "last":
+            v = res[:, -1].astype("float32")      # 左填充下最后一位必是真实 token
+        elif mode == "cls":
+            v = res[:, 0].astype("float32")       # 右填充下首位必是 CLS（XLM-R 的 <s>）
+        else:                                     # mean：attention_mask 加权平均（encoder 模型）
+            m = mask[..., None].astype("float32")
+            v = (res * m).sum(1) / np.clip(m.sum(1), 1e-9, None)
         v /= (np.linalg.norm(v, axis=1, keepdims=True) + 1e-12)
         out.append(v)
     return np.vstack(out)
