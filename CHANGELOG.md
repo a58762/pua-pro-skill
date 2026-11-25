@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## v5.11（2026-11-25）
+
+**扩源：8 个语种 → 20 个地区（实测 200 可达）**
+- 新增 12 国本地一手社区，全部实测可用：韩国 Viblo、意大利 Leganerd、土耳其 Webrazzi、
+  乌克兰 DOU、荷兰 Bright、印尼 detikInet、印度 Analytics India Mag、阿联酋 AITnews、
+  瑞典 IDG、芬兰 MikroBitti、匈牙利 Bitport、挪威 Digi
+- 语料 618 → **917 条**，地区 8 → **20 个**
+- 新增 `scripts/source_check.py`：逐源自检（每源抽 2 条标题查询，看能否检索回自己），实测 **16/21 源完全可用**
+- 新增 `scripts/coverage_test.py`：18 语种 × Top5 覆盖实测
+
+**实测结论（都写进 references/local-index.md）**
+- 纯 `sem` 跨语言**确实有效**（德文 query 命中日本内容、韩文命中 arXiv），但只命中本国内容 6/18
+- 原因不是模型：**「人工知能」在库里 0 次，「AI」567 次** —— 各国源普遍用英文缩写 AI，语言现实
+- **找各国本地视角应该用 `hybrid` 而不是 `sem`**：韩文「인공지능」→ 土耳其+印度+越南；印尼文 → 3 条印尼本地
+- 弱项定位：HN 类**短标题**（3-5 词）self-retrieval 偏弱，向量信息量不足
+
+**不可达清单（附原因，避免反复踩）**
+- 波兰 niebezpiecznik（302）、丹麦 version2（403）、意大利 punto-informatico（**451 法务屏蔽**）
+- 荷兰 Tweakers（404）、捷克 root.cz（超时）、韩国 44bits（404）
+- 芬兰 MikroBitti / 挪威 Digi（200 但解析 0 条，RSS 格式特殊）
+
 ## v5.10（2026-11-25）
 
 **找到 2026 Q4 真正的最强可下载小模型**
