@@ -50,21 +50,48 @@ python3 scripts/local_search.py stats
 ```
 
 
-## 多语种源（2026-11-24 实测可达）
+## 多语种源：实测覆盖 20 个地区（2026-11-25 全部 200 可达）
 
-| 语种 | 源 | 状态 |
-|---|---|---|
-| 英 | Hacker News(API) / The Register / LWN / Phoronix / OSNews | ✅ |
-| 日 | Qiita(API) / Zenn(RSS) / 技術評論社(RSS) | ✅ |
-| 俄 | Habr（ru / en 双通道） | ✅ |
-| 德 | Golem / Born's Tech | ✅ |
-| 法 | Next / LinuxFr | ✅ |
-| 西 | Hipertextual | ✅ |
-| 葡(巴西) | TabNews | ✅ |
-| AI 专源 | arXiv cs.AI（`rss.arxiv.org`）/ Zenn AI 主题 / Qiita AI 标签 / Simon Willison / HN 搜 LLM | ✅ |
+| 地区 | 源 | 条数 | 状态 |
+|---|---|---|---|
+| 日本 | 技術評論社 / Qiita / Qiita-AI / Zenn / Zenn-AI | 174 | ✅ 全可用 |
+| 美国 | HN / HN-LLM / Phoronix / OSNews / LWN | 126 | ✅（HN 短标题 self-retrieval 偏弱） |
+| 法国 | Next.ink / LinuxFr | 65 | ✅ |
+| 国际 | arXiv cs.AI | 60 | ✅ |
+| 印尼 | detikInet | 60 | ✅ |
+| 意大利 | Leganerd | 60 | ✅ |
+| 德国 | Golem / Born's Tech | 58 | ✅ |
+| 印度 | Analytics India Mag | 50 | ✅ |
+| 俄罗斯 | Habr (ru/en) | 49 | ✅ |
+| 韩国 | Viblo | 40 | ✅ |
+| 巴西 | TabNews | 32 | ✅ |
+| 英国 | The Register / Simon Willison | 30 | ✅ |
+| 荷兰 | Bright.nl | 24 | ✅ |
+| 瑞典 | IDG.se | 20 | ✅ |
+| 土耳其 | Webrazzi | 20 | ✅ |
+| 西班牙 | Hipertextual | 15 | ✅ |
+| 阿联酋 | AITnews | 10 | ✅ |
+| 匈牙利 | Bitport | 10 | ✅ |
+| 乌克兰 | DOU | 5 | ✅（产出少） |
 
-不可达：Heise（DNS 污染）、Tweakers（403）、OKKY（403）、Velog（404）、
-`huggingface.co/blog/feed.xml`（000 超时）、`news.ycombinator.com/rss`（000，改走 Algolia API）
+**实测不可达**（都有明确原因，不是配置错）：
+- 波兰 niebezpiecznik（302 重定向，需浏览器 UA）
+- 丹麦 version2（403）
+- 意大利 punto-informatico（**451 法务屏蔽**）
+- 荷兰 Tweakers（404，RSS 路径已迁）
+- 捷克 root.cz（连接超时）
+- 韩国 44bits、越南 Viblo/feed（404，正确路径是 `/rss`）
+- 芬兰 MikroBitti / 挪威 Digi（200 但解析 0 条，RSS 格式特殊）
+
+**逐源可用性自检**：`python3 scripts/source_check.py`（每个源抽 2 条标题查询，看能否检索回自己）
+实测 16/21 源完全可用；弱项集中在**短标题**（HN 的 "LLM Inevitabilism" 这类 3-5 词标题，向量信息量不足）。
+
+**多语种查询实测（18 语种 × Top5，2026-11-25）**：
+- 纯 `sem`：命中本国内容 **6/18**，其余多为英文 arXiv —— 跨语言语义**确实有效**（德文 query 命中日本内容、韩文命中 arXiv），但**目标语种的本地源当期鲜有 AI 主题**
+- `hybrid`（BM25 + 向量）：明显更好。韩文「인공지능」→ 土耳其 + 印度 + 越南；印尼文「kecerdasan buatan」→ 3 条印尼本地
+- **语料实情**：「人工知能」在库里 0 次，「AI」567 次 —— 日本源也普遍用英文缩写 AI。**这是语言现实，不是抓取缺陷**
+
+**结论：找各国本地视角用 `hybrid` 而不是 `sem`。**
 
 ## 正文抓取：解决"搜不到正文里的词"
 
