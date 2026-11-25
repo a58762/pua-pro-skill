@@ -111,47 +111,41 @@ python3 scripts/local_search.py index --fetch-body --body-limit 6
 
 **模型选型（按实证选，不按名气压）**：
 
-| 模型 | 可下载 | 维度 | 结论 |
-|---|---|---|---|
-| `BAAI/bge-small-en-v1.5` | ✅ | 384 | 纯英文模型，中↔日仅 0.488，**淘汰** |
-| `paraphrase-multilingual-MiniLM-L12-v2` | ✅ | 384 | 50+ 语种，中↔日 0.980、中↔英 0.969，**现用** |
-| `Qwen3-Embedding-0.6B` int8 ONNX | ✅ 585MB | 1024 | MTEB 多语言强于 gemini-embedding-001，已落地 `bin/qwen3_emb.py` |
-| `Qwen3-Embedding-8B` | ✅ 但 15GB | 7168 | RTEB 检索榜第 1，本机放不下 |
-| Gemini Embedding | ❌ **专有，官方标注 Self-host: No** | 3072 | 只能调 API；各榜名次不一致 |
-| `harrier-oss-v1-27b`（微软 MIT） | ✅ 但 27B | — | MTEB Multilingual v2 榜首，本机放不下 |
+| 模型 | 可下载 | 维度 | 体积 | 结论 |
+|---|---|---|---|---|
+| `BAAI/bge-small-en-v1.5` | ✅ | 384 | 130MB | 纯英文，中↔日仅 0.488，**淘汰** |
+| `paraphrase-multilingual-MiniLM-L12-v2` | ✅ | 384 | 450MB | 2020 年的老将，R@1=0.400，**降为回退** |
+| **`Harrier-OSS-V1-0.6B` q4 ONNX** | ✅ | 1024 | **399MB** | **现役默认**：微软，MIT，MTEB v2 69.0，R@1=0.567 |
+| `Octen-Embedding-0.6B` int8 | ✅ | 1024 | 599MB | Apache 2.0，batch=1 时 0.95/1.00（N=60），但批维硬编码为 1，速度差 |
+| `Qwen3-Embedding-0.6B` int8 | ✅ | 1024 | 585MB | 同家族但弱一档，已被 Harrier 取代 |
+| `EmbeddingGemma 2` | ✅ | 768 | ~1.5GB | 强在多模态/代码，**多语言 61.15→61.36 几乎无提升**，落选 |
+| `jina-embeddings-v5-text-nano/small` | ✅ | 768/1024 | ~1GB | **CC BY-NC 非商业许可**，落选 |
+| `Qwen3-Embedding-8B` / `harrier-oss-v1-27b` | ✅ 但 15–54GB | 7168/5376 | — | 榜单第一，本机放不下 |
+| Gemini Embedding | ❌ **专有，官方 Self-host: No** | 3072 | — | 只能调 API |
 
 **"某榜第一"不可信**：同一个 gemini-embedding-2，在一篇日文实测里跨语言排名第 1，在另一份 Borda 综合榜里排第 10。榜单构造、任务集、top-k 都会改结论。
-**余弦绝对值不能跨模型比较**：老模型的向量空间容易塌缩在 0.9+，看着"相似度高"，实际区分度差。MiniLM 中↔日 0.980 而 Qwen3 只有 0.767，不代表 MiniLM 更强。
-**唯一可靠比较方式**：self-retrieval recall@k（拿正文中段句当 query，看能否检索回原文），见 `scripts/cmp_embed.py`。
+**余弦绝对值不能跨模型比较**：老模型的向量空间容易塌缩在 0.9+，看着"相似度高"，实际区分度差。
 
-**本机实测（150 条语料 / 20 条 query，2026-11-25）**：
+**唯一可靠比较方式**：self-retrieval recall@k，见 `scripts/bench_one.py`（单模型）/ `scripts/cmp_embed.py`（双模型）。
+
+**本机实测（150 条语料 / 30 query / 标题做 query / doc 不含标题 / batch=8）**：
 
 | 模型 | 维度 | R@1 | R@5 |
 |---|---|---|---|
-| MiniLM-multilingual | 384 | **0.200** | **0.300** |
-| Qwen3-Embedding-0.6B int8 | 1024 | 0.150 | 0.300 |
-| Qwen3-Embedding-0.6B int8 + instruct | 1024 | 0.200 | 0.250 |
+| MiniLM-multilingual（原现役） | 384 | 0.400 | 0.433 |
+| **Harrier-OSS-V1-0.6B q4** | 1024 | **0.567** | **0.767** |
 
-**结论：榜单不算数，本场景持平 → 继续用 MiniLM。** 体积小 10 倍（384 维 vs 1024 维），加载快，效果不输。
-样本量小（20 query），差异不显著；但「没有明显优势」这一点已足以支撑选型——没必要为账面排名付 10 倍的存储和计算代价。
+**R@1 +0.167、R@5 +0.334**。代价：维度 384→1024（存储 ×2.7），单条推理更慢。
 
-**实测到的硬限制**：4GB 内存下 Qwen3 int8 的 **batch 必须 ≤ 4**，batch=16 会被 OOM 直接杀掉（没有 traceback，表现为静默退出，排查花了很久）。
+**评测设计必须避开的四个坑**（都踩过）：
+1. `gold` 存数据库 id 而 `topk` 是行号 → 比对全错，R@1 恒为 0
+2. query 取自长正文中段，doc 只取前 1200 字 → 那句话根本不在被检索文本里
+3. 修好截断后，取到的"句子"是图注碎片（`図2 images/fig02...`）→ 改用标题做 query
+4. doc 里含标题 → R@1 假性 1.0 泄漏 → doc 必须剔除标题
 
-**三种检索模式**：
+**Qwen3 系必须加 query instruction**：`Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `，documents 不加。
 
-| 命令 | 原理 | 适合 |
-|---|---|---|
-| `search` | FTS5 + BM25 | 关键词明确 |
-| `sem` | 纯向量余弦 | 描述性/模糊查询 |
-| `hybrid` | BM25 + 向量，RRF 融合 | **默认推荐** |
-
-**实测跨语言能力**（MiniLM-multilingual，414→571 条语料）：
-```
-中文「大语言模型的推理论文」→ arXiv 三篇（0.676 / 0.663 / 0.627）
-中文「大语言模型」 vs 日文「大規模言語モデル」→ 0.980
-中文「开源软件的安全性」 vs 英文「open source software security」→ 0.949
-```
-词面匹配绝对做不到这件事。
+**decoder-only 模型必须左填充**：右填充会让 last-token pooling 取到 pad 的隐状态，向量全错（实测 R@1 从 0.95 掉到 0.15）。
 
 ## JS 渲染：抓 React/Vue 空壳站（2026-11-25 落地）
 
