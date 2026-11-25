@@ -136,43 +136,49 @@ python3 scripts/local_search.py index --fetch-body --body-limit 6
 
 **解决什么**：词面匹配救不了同义与跨语言——搜「大语言模型」找不到只写了「LLM」的文章。
 
-**模型选型（按实证选，不按名气压）**：
+**模型选型：按「社区真实使用 + 本机实测」双重筛选（2026-11-25）**
 
-| 模型 | 可下载 | 维度 | 体积 | 结论 |
+先看 HuggingFace 的真实数据（下载量/点赞是社区用脚投票的结果，不是编辑推荐）：
+
+| 模型 | 月下载 | 点赞 | 创建 | 结论 |
 |---|---|---|---|---|
-| `BAAI/bge-small-en-v1.5` | ✅ | 384 | 130MB | 纯英文，中↔日仅 0.488，**淘汰** |
-| `paraphrase-multilingual-MiniLM-L12-v2` | ✅ | 384 | 450MB | 2020 年的老将，R@1=0.400，**降为回退** |
-| **`Harrier-OSS-V1-0.6B` q4 ONNX** | ✅ | 1024 | **399MB** | **现役默认**：微软，MIT，MTEB v2 69.0，R@1=0.567 |
-| `Octen-Embedding-0.6B` int8 | ✅ | 1024 | 599MB | Apache 2.0，batch=1 时 0.95/1.00（N=60），但批维硬编码为 1，速度差 |
-| `Qwen3-Embedding-0.6B` int8 | ✅ | 1024 | 585MB | 同家族但弱一档，已被 Harrier 取代 |
-| `EmbeddingGemma 2` | ✅ | 768 | ~1.5GB | 强在多模态/代码，**多语言 61.15→61.36 几乎无提升**，落选 |
-| `jina-embeddings-v5-text-nano/small` | ✅ | 768/1024 | ~1GB | **CC BY-NC 非商业许可**，落选 |
-| `Qwen3-Embedding-8B` / `harrier-oss-v1-27b` | ✅ 但 15–54GB | 7168/5376 | — | 榜单第一，本机放不下 |
-| Gemini Embedding | ❌ **专有，官方 Self-host: No** | 3072 | — | 只能调 API |
+| `sentence-transformers/all-MiniLM-L6-v2` | 1.65 亿 | 6178 | 2021 | 纯英文，不适用多语言 |
+| **`BAAI/bge-m3`** | **3533 万** | **4041** | 2024-01 | 多语言赞数第一，两年后仍在 trending |
+| `intfloat/multilingual-e5-large` | 750 万 | 1292 | 2022 | 老牌多语言 |
+| `Qwen/Qwen3-Embedding-0.6B` | 697 万 | 1360 | 2025 | 阿里，119 语言 |
+| **`google/embeddinggemma-2`** | 60 万 | **3475** | 2026 | **trending 榜首（41）** |
+| `microsoft/harrier-oss-v1-0.6b` | 20 万 | 347 | 2026-03 | 很新，社区还没普及 |
 
-**"某榜第一"不可信**：同一个 gemini-embedding-2，在一篇日文实测里跨语言排名第 1，在另一份 Borda 综合榜里排第 10。榜单构造、任务集、top-k 都会改结论。
-**余弦绝对值不能跨模型比较**：老模型的向量空间容易塌缩在 0.9+，看着"相似度高"，实际区分度差。
+然后**全部下载实测**（同一套 self-retrieval，150 条语料 / 30 query / 标题做 query / doc 不含标题）：
 
-**唯一可靠比较方式**：self-retrieval recall@k，见 `scripts/bench_one.py`（单模型）/ `scripts/cmp_embed.py`（双模型）。
+| 模型 | 体积 | 维度 | R@1 | R@5 |
+|---|---|---|---|---|
+| **embeddinggemma-300m q4** | **197MB** | 768 | **0.733** | **0.833** |
+| embeddinggemma-2（740M 多模态） | 174MB | 768 | 0.733 | 0.800 |
+| Harrier-OSS-V1-0.6B q4 | 399MB | 1024 | 0.567 | 0.767 |
+| MiniLM-multilingual | 450MB | 384 | 0.400 | 0.433 |
+| **bge-m3 int8**（赞数第一） | 542MB | 1024 | **0.133** | 0.267 |
 
-**本机实测（150 条语料 / 30 query / 标题做 query / doc 不含标题 / batch=8）**：
+**结论：换 `EmbeddingGemma-300m`**。它同时满足「社区评价最高」（trending 榜首）和「实测最强」（R@1=0.733，比 Harrier +0.166，比 bge-m3 +0.600），体积还最小（197MB）。
 
-| 模型 | 维度 | R@1 | R@5 |
-|---|---|---|---|
-| MiniLM-multilingual（原现役） | 384 | 0.400 | 0.433 |
-| **Harrier-OSS-V1-0.6B q4** | 1024 | **0.567** | **0.767** |
+**关键教训**：
+- **点赞数 ≠ 任务上的强弱**。bge-m3 有 4041 赞，但在「短 query 找长文档」这个任务上 R@1 只有 0.133
+- **榜单排名也不能直接采信**。Harrier 在 MTEB v2 是 69.0，比 Gemma 的多语言分（61 左右）高，但实测反而低 0.166
+- **唯一可靠的是本机同条件实测**（`scripts/bench_one.py`）
 
-**R@1 +0.167、R@5 +0.334**。代价：维度 384→1024（存储 ×2.7），单条推理更慢。
-
-**评测设计必须避开的四个坑**（都踩过）：
+**评测设计必须避开的坑**（全部踩过，写在 cmp_embed.py 注释里）：
 1. `gold` 存数据库 id 而 `topk` 是行号 → 比对全错，R@1 恒为 0
 2. query 取自长正文中段，doc 只取前 1200 字 → 那句话根本不在被检索文本里
-3. 修好截断后，取到的"句子"是图注碎片（`図2 images/fig02...`）→ 改用标题做 query
+3. 修好截断后取到的"句子"是图注碎片（`図2 images/fig02...`）→ 改用标题做 query
 4. doc 里含标题 → R@1 假性 1.0 泄漏 → doc 必须剔除标题
 
-**Qwen3 系必须加 query instruction**：`Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: `，documents 不加。
-
-**decoder-only 模型必须左填充**：右填充会让 last-token pooling 取到 pad 的隐状态，向量全错（实测 R@1 从 0.95 掉到 0.15）。
+**各模型的推理注意点（都踩过）**：
+| 模型 | pooling | padding | 特殊要求 |
+|---|---|---|---|
+| EmbeddingGemma | mean（mask 加权） | **必须关闭 padding**（ONNX 图对变长 batch 不兼容） | query 加 `task: search result \| query: `，doc 加 `title: none \| text: ` |
+| Harrier / Qwen3 | last-token | **必须左填充**（右填充会取到 pad 的隐状态） | query 加 `Instruct: ...\nQuery: ` |
+| bge-m3 / XLM-R | **CLS**（不是 mean） | 右填充 | 无前缀 |
+| Octen | last-token | 左填充 | 输出 batch 维**硬编码为 1** |
 
 ## JS 渲染：抓 React/Vue 空壳站（2026-11-25 落地）
 
