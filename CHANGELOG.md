@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## v5.12（2026-11-25）
+
+**按「社区真实使用数据 + 本机实测」重新选型，换成 Google EmbeddingGemma-300m**
+
+第一步：查 HuggingFace 一手数据（下载量/点赞是社区用脚投票，不是编辑推荐）
+- `bge-m3`：**3533 万下载 / 4041 赞**，多语言赞数第一，2024 年的模型仍在新趋势榜
+- `google/embeddinggemma-2`：**trending 榜首（41）/ 3475 赞**
+- `Qwen3-Embedding-0.6B`：697 万 / 1360 赞
+- `Harrier-OSS-V1-0.6B`：20 万 / 347 赞（2026-03 才发布，社区还没普及）
+
+第二步：全部下载，同一套 self-retrieval 实测（150 条 / 30 query）
+| 模型 | 体积 | 维度 | R@1 | R@5 |
+|---|---|---|---|---|
+| **embeddinggemma-300m q4** | **197MB** | 768 | **0.733** | **0.833** |
+| embeddinggemma-2（740M 多模态） | 174MB | 768 | 0.733 | 0.800 |
+| Harrier-OSS-V1-0.6B q4 | 399MB | 1024 | 0.567 | 0.767 |
+| MiniLM-multilingual | 450MB | 384 | 0.400 | 0.433 |
+| bge-m3 int8（赞数第一） | 542MB | 1024 | 0.133 | 0.267 |
+
+**结论：点赞数和榜单排名都不能直接采信**。bge-m3 有 4041 赞、Harrier 在 MTEB v2 是 69.0，但实测都被 197MB 的 Gemma-300m 打败。
+
+**下载提速：dl_chunks → aria2c**
+- `aria2c -x16 -s16 -k4M` 实测 **17.13 MB/s**，比原分片下载器（2.8MB/s）快 6 倍
+- 568MB 模型 30 秒下完；`setup_models.sh` 已改为优先 aria2c，无则回退 dl_chunks
+
+**修掉三个把 gemma 判死的 bug**
+1. **pad token 硬编码** `<|endoftext|>` → Gemma 用 `<pad>`，改为从 tokenizer_config 自动探测
+2. **必须关闭 padding**：gemma 的 ONNX 图对变长 batch 不兼容（报 concatenate 尺寸不匹配），改逐条推理
+3. **环境变量在 import 时固化**：`qwen3_emb.py` 的 `D/F/POOL/PAD` 原是模块级常量，导致进程内切换模型无效；改为 `_load()` 时读取
+
+**模型推理差异表（写进 references/local-index.md）**
+| 模型 | pooling | padding | 前缀 |
+|---|---|---|---|
+| EmbeddingGemma | mean | 关闭 | `task: search result \| query: ` / `title: none \| text: ` |
+| Harrier/Qwen3 | last-token | 左填充 | `Instruct: ...\nQuery: ` |
+| bge-m3 | **CLS**（不是 mean） | 右填充 | 无 |
+| Octen | last-token | 左填充 | 无（批维硬编码 1） |
+
 ## v5.11（2026-11-25）
 
 **扩源：8 个语种 → 20 个地区（实测 200 可达）**
