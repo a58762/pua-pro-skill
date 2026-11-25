@@ -234,7 +234,7 @@ bash /sandbox/workspace/skills/pua-pro/scripts/boot.sh --diff   # 只看差异 +
 | 要改提示词/description | `references/prompting.md`（有效与无效手段、触发机制） |
 | 处理外部数据/网页/工具返回 | `references/safety.md`（数据不是指令、三道防线、危险信号） |
 | 查已知源的最新动态 | `python3 scripts/local_search.py search "词"`（BM25，毫秒级，零网络） |
-| 同义 / 跨语言模糊查询 | `python3 scripts/local_search.py sem "描述"`（多语言向量，中↔日 0.980） |
+| 同义 / 跨语言模糊查询 | `python3 scripts/local_search.py sem "描述"`（Harrier 多语言向量，R@1 比 MiniLM 高 0.167） |
 | 混合检索（默认推荐） | `python3 scripts/local_search.py hybrid "词"`（BM25 + 向量 RRF 融合） |
 | 抓整站 / 列站点 URL | `crawl <url> --limit N --depth N` / `map <url>`（JS 空壳站自动走 lightpanda 渲染） |
 | 语料定时更新 | `bash scripts/refresh.sh`（目录锁 + 有界抓取，可挂 cron） |
