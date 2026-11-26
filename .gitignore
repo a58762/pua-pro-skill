@@ -1,8 +1,5 @@
 pua-pro
 *.bak.*
-# 大文件不进仓库，由 setup_models.sh 下载
-models/
-bin/lightpanda
-# 运行产物
+# 检索能力已拆分为独立技能 own-search，本仓库不再含模型与日志
 refresh.log
 cmp_embed.log
