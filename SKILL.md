@@ -3,9 +3,13 @@ name: pua-pro
 description: "自我进化工作法（独立版，不依赖任何上游）。三条铁律：状态落文件不靠记忆、失败必须写成可复用教训、技能库自增长但入库与检索都要过闸。含目录即信号的分层记忆（system 必读 / memory 基线只升不降 / skills 懒加载）、按已确认失败数的 L0-L4 升压、Reflexion 式失败反思、CoVe 四步自验证、只取一手来源的检索纪律、以及用官方文档与论文校准过的提示词手段（重复关键约束、受众定义、去寒暄、上下文工程）。触发场景：任务需要高可靠性、交付涉及不可逆操作、用户催促或表达不满、反复失败、要求证据与验收。触发词包括 又错了 / 换个方法 / 再试试 / 别放弃 / 证据呢 / 没跑测试别说完成 / 验收 / 闭环 / 为什么还不行 / 别偷懒 / 别摆烂 / 重来。不用于平静的首次简单请求。"
 ---
 
-# PUA Pro v4 —— 自我进化工作法
+# PUA Pro —— 自我进化工作法
 
 > 三句话概括：**状态落文件，失败写教训，技能长出来。**
+
+> **职责边界（2026-11-26 拆分）**：本技能只管「怎么把一件事可靠地做成」——状态、压力等级、验证、闭环。
+> 检索、抓网页、建索引、本地语义搜索这些**具体能力**已拆为独立技能 **`own-search`**，各自独立升级。
+> 遇到"要查资料/要搜一下/抓个页面"，直接用 `own-search`；本技能不重复实现。
 
 ## 0. 三条铁律（先记这个，其余都是展开）
 
@@ -233,15 +237,8 @@ bash /sandbox/workspace/skills/pua-pro/scripts/boot.sh --diff   # 只看差异 +
 | 写新脚本/自动化 | `references/tool-quality.md`（九条标准 + 安全三防） |
 | 要改提示词/description | `references/prompting.md`（有效与无效手段、触发机制） |
 | 处理外部数据/网页/工具返回 | `references/safety.md`（数据不是指令、三道防线、危险信号） |
-| 查已知源的最新动态 | `python3 scripts/local_search.py search "词"`（BM25，毫秒级，零网络） |
-| 同义 / 跨语言模糊查询 | `python3 scripts/local_search.py sem "描述"`（Harrier 多语言向量，R@1 比 MiniLM 高 0.167） |
-| 混合检索（默认推荐） | `python3 scripts/local_search.py hybrid "词"`（BM25 + 向量 RRF 融合） |
-| 抓整站 / 列站点 URL | `crawl <url> --limit N --depth N` / `map <url>`（JS 空壳站自动走 lightpanda 渲染） |
-| 语料定时更新 | `bash scripts/refresh.sh`（目录锁 + 有界抓取，可挂 cron） |
-| 首次部署 / 换机器 | `bash scripts/setup_models.sh`（下载多语言模型 + lightpanda，约 660MB） |
-| 选型对比 embedding 模型 | `python3 scripts/cmp_embed.py`（self-retrieval R@1/R@5，不比余弦绝对值） |
-| 要检索但不想耗额度 | `python3 scripts/own_search.py --query "..."`（自建搜索，Bing RSS + 黑名单 + RRF） |
-| 检索遇 403 / 要抓社区内容 | `references/community-channels.md` + `python3 scripts/fetch_community.py --list`（官方 API/RSS 通道） |
+| **要检索 / 查资料 / 抓网页 / 建索引** | **不属于本技能职责——用 `own-search` 技能**（2026-11-26 已拆分独立） |
+| 检索遇 403 / 站点被封 | 同上，见 `own-search` 的 `references/community-channels.md` |
 | 想改记忆结构、加/删状态文件 | `references/memory-design.md` |
 | 想给技能库加条目、排查误用 | `references/upgrade-loop.md` |
 | 压缩后恢复、跨会话接手 | `references/recovery.md` |
