@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## v5.13（2026-11-26）拆分：检索能力独立为 own-search
+
+**为什么拆**
+- 一个技能同时背「工作法」和「检索工具链」，两边升级互相牵制：改检索要重跑工作法的 25 项回归，改工作法又要担心检索脚本的路径
+- 检索部分已有 15 个脚本 + 3 篇参考文献 + 917 条语料库，体量已经超过主技能本身
+- 用户明确要求「以后分别升级两个技能」
+
+**怎么拆**
+- `pua-pro`：只剩工作法（状态 / 压力等级 / 验证 / 闭环）+ boot.sh / selftest.sh / bench.py + 6 篇 references
+- `own-search`：检索全链路（local_search / setup_models / refresh / bench_one / source_check / coverage_test / mrl_test / qwen3_emb / dl_chunks / aria2c 可移植包 / fetch_community / own_search / search2）+ 3 篇 references
+- 两个技能**互不依赖**：own-search 不读 `.pua/` 状态目录，pua-pro 不再执行任何检索脚本
+- 交叉点只有一条：pua-pro 的按需加载表里写「要检索 → 用 own-search 技能」
+
+**验证**
+- 拆分后 pua-pro selftest 仍 25/25 全绿
+- own-search 独立跑通 `index` / `search` / `sem` / `hybrid`（917 条向量，768 维，EmbeddingGemma-300m）
+
+## v5.12（2026-11-25）
 ## v5.12（2026-11-25）
 
 **按「社区真实使用数据 + 本机实测」重新选型，换成 Google EmbeddingGemma-300m**
