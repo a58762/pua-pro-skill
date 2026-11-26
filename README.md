@@ -1,4 +1,4 @@
-# PUA Pro —— 自我进化工作法（v5.9）
+# PUA Pro —— 自我进化工作法（v5.13）
 
 给 AI 施加**可验证的压力**，逼出不偷懒的交付。
 
@@ -62,36 +62,22 @@ pua-pro/
 │   ├── recovery.md              检查点与恢复
 │   ├── tool-quality.md          九条验收标准 + 安全三防 + 重试规范
 │   ├── prompting.md             提示词有效/无效手段 + 触发机制
-│   ├── safety.md                数据不是指令（注入防护）
-│   ├── community-channels.md    官方 API/RSS 通道、403 诊断法
-│   ├── own-search.md            自建搜索机制 + 能力边界
-│   └── local-index.md           本地索引：FTS5/向量/渲染/crawl-map
-├── scripts/
-│   ├── boot.sh                  对账型启动器（幂等 / 漂移检测 / 双锁 / 安全校验）
-│   ├── selftest.sh              25 项断言回归集
-│   ├── bench.py                 预热 + 中位数 + MAD 剔除的基准器
-│   ├── local_search.py          自建索引：index/search/sem/hybrid/embed/crawl/map/stats
-│   ├── refresh.sh               语料定时更新（目录锁 + 有界抓取）
-│   ├── setup_models.sh          首次部署下载模型 + lightpanda（约 660MB）
-│   ├── qwen3_emb.py             Qwen3-Embedding-0.6B 独立推理器（可选）
-│   ├── cmp_embed.py             embedding 选型对照（self-retrieval R@1/R@5）
-│   ├── dl_chunks.py             分片并发下载器（逐块校验）
-│   ├── fetch_community.py       社区一手通道抓取
-│   ├── own_search.py            零成本自建搜索
-│   └── search2.py               搜索 v2（加权 RRF + 可解释打分）
-├── models/                      本地模型（skill 本体内不含，由 setup_models.sh 下载）
-└── bin/                         lightpanda 可执行文件（同上）
+│   └── safety.md                数据不是指令（注入防护）
+└── scripts/
+    ├── boot.sh                  对账型启动器（幂等 / 漂移检测 / 双锁 / 安全校验）
+    ├── selftest.sh              25 项断言回归集
+    └── bench.py                 预热 + 中位数 + MAD 剔除的基准器
 ```
+
+> **检索能力已拆分**：抓网页、建索引、本地语义搜索属于独立技能 **`own-search`**，不在本仓库内。
+
+
 
 ---
 
 ## 快速开始
 
 ```bash
-# 0) 首次部署：下载语义模型 + JS 渲染器（约 660MB，可断点续传）
-bash scripts/setup_models.sh
-#   加 Qwen3-Embedding-0.6B（再多 585MB）：PUA_WANT_QWEN3=1 bash scripts/setup_models.sh
-
 # 1) 初始化状态目录并自检（幂等，重复跑不会重复写）
 bash scripts/boot.sh
 
@@ -104,10 +90,7 @@ bash scripts/selftest.sh
 # 4) 测性能
 python3 scripts/bench.py "bash scripts/boot.sh --check" 20
 
-# 5) 建本地检索库并查询（零额度）
-python3 scripts/local_search.py index --fetch-body
-python3 scripts/local_search.py hybrid "大语言模型"
-python3 scripts/local_search.py crawl https://react.dev/learn --limit 5 --depth 1
+# 5) 要检索 → 用独立技能 own-search，不在本技能内
 ```
 
 退出码：`0` 全绿 · `2` 有漂移 · `3` 锁被占用 · `4` 用法或路径错误
